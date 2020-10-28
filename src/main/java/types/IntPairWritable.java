@@ -3,7 +3,6 @@ package types;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.Arrays;
 
 import org.apache.hadoop.io.WritableComparable;
 
