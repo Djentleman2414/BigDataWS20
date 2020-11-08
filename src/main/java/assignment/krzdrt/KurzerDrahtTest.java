@@ -7,10 +7,12 @@ import java.util.HashSet;
 import java.util.List;
 
 import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mrunit.mapreduce.MapDriver;
 import org.apache.hadoop.mrunit.mapreduce.MultipleInputsMapReduceDriver;
 import org.apache.hadoop.mrunit.mapreduce.ReduceDriver;
+import org.apache.hadoop.mrunit.types.Pair;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -18,6 +20,7 @@ import assignment.krzdrt.KurzerDraht.ContactMapper;
 import assignment.krzdrt.KurzerDraht.DistanceCombiner;
 import assignment.krzdrt.KurzerDraht.DistanceReducer;
 import assignment.krzdrt.KurzerDraht.GroupingComparator;
+import assignment.krzdrt.KurzerDraht.KeyOrderComparator;
 import assignment.krzdrt.KurzerDraht.MapValue;
 import types.IntPairWritable;
 
@@ -28,20 +31,24 @@ public class KurzerDrahtTest {
 	ReduceDriver<IntPairWritable, MapValue, IntWritable, IntWritable> reduceDriver1;
 	MultipleInputsMapReduceDriver<IntPairWritable, MapValue, IntWritable, IntWritable> mapReduceDriver;
 	
+	@SuppressWarnings("unchecked")
 	@Before
 	public void setup() {
 		ContactMapper mapper1 = new ContactMapper();
 		DistanceCombiner combiner = new DistanceCombiner();
 		DistanceReducer reducer1 = new DistanceReducer();
+		KeyOrderComparator orderComparator = new KeyOrderComparator();
 		GroupingComparator groupingComparator = new GroupingComparator();
 		
 		mapDriver1 = new MapDriver<Object, Text, IntPairWritable, MapValue>(mapper1);
 		combineDriver = new ReduceDriver<IntPairWritable, MapValue, IntPairWritable, MapValue>(combiner);
 		reduceDriver1 = new ReduceDriver<IntPairWritable, MapValue, IntWritable, IntWritable>(reducer1);
 		mapReduceDriver = new MultipleInputsMapReduceDriver<IntPairWritable, MapValue, IntWritable, IntWritable>(combiner, reducer1);
+		mapReduceDriver.withKeyOrderComparator(orderComparator);
 		mapReduceDriver.withKeyGroupingComparator(groupingComparator);
 		
 	}
+	
 	
 	@Test
 	public void map1Test() throws IOException {
@@ -198,5 +205,29 @@ public class KurzerDrahtTest {
 		reduceDriver1.withOutput(outKey, outValue);
 		
 		reduceDriver1.runTest();
+	}
+	
+	@Test
+	public void mapReduceTest() throws IOException {
+		ContactMapper mapper = new ContactMapper();
+		IntWritable key = new IntWritable(1);
+		List<Pair<Object,Text>> inputs = new ArrayList<>();
+		inputs.add(new Pair<>(key, new Text("10000 5")));
+		inputs.add(new Pair<>(key, new Text("22 10000")));
+		inputs.add(new Pair<>(key, new Text("5 22")));
+		inputs.add(new Pair<>(key, new Text("5 10")));
+		mapReduceDriver.addAll(mapper, inputs);
+		mapReduceDriver.withMapper(mapper);
+		
+		List<Pair<IntWritable,IntWritable>> outputs = new ArrayList<>();
+		outputs.add(new Pair<>(new IntWritable(5), new IntWritable(1)));
+		outputs.add(new Pair<>(new IntWritable(22), new IntWritable(1)));
+		outputs.add(new Pair<>(new IntWritable(22), new IntWritable(2)));
+		outputs.add(new Pair<>(new IntWritable(5), new IntWritable(2)));
+		outputs.add(new Pair<>(new IntWritable(10), new IntWritable(2)));
+		mapReduceDriver.addAllOutput(outputs);
+		
+		mapReduceDriver.runTest(false);
+		
 	}
 }

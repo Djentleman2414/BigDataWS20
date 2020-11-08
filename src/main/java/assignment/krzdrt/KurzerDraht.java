@@ -6,18 +6,30 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Iterator;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.io.WritableComparator;
+import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.MultipleInputs;
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
 
 import types.IntPairWritable;
 
-public class KurzerDraht {
+public class KurzerDraht extends Configured implements Tool {
 	
-	public static final int TARGET_ID = 10000;
+	public static final int TARGET_ID = 1;
 	
 	public static class MapValue implements WritableComparable<MapValue>, Cloneable {
 		
@@ -49,18 +61,17 @@ public class KurzerDraht {
 		private HashSet<Integer> adjacentActors;
 		
 		public MapValue() {
-			// TODO Auto-generated constructor stub
 		}
 		
 		public MapValue(int valueType) {
-			this.valueType = valueType;
-			
-			if(valueType == adjacentActorsType)
-				adjacentActors = new HashSet<>();
+			setValueType(valueType);
 		}
 		
 		public void setValueType(int valueType) {
 			this.valueType = valueType;
+			
+			if(valueType == adjacentActorsType && adjacentActors ==  null)
+				adjacentActors = new HashSet<>();
 		}
 		
 		public int getValueType() {
@@ -125,9 +136,7 @@ public class KurzerDraht {
 			}
 			
 			out.writeInt(adjacentActors.size());
-			int i = 0;
 			for(int actor : adjacentActors) {
-				i++;
 				out.writeInt(actor);
 			}
 		}
@@ -198,8 +207,9 @@ public class KurzerDraht {
 				sb.append(':').append(distance);
 				break;
 			case 3:
+				sb.append(':');
 				for(int actor : adjacentActors) {
-					sb.append(':').append(actor);
+					sb.append(actor).append(',');
 				}
 				break;
 			}
@@ -232,7 +242,7 @@ public class KurzerDraht {
 		
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			
-			if(value.charAt(0) == '%')
+			if(value.getLength() == 0 || value.charAt(0) == '%')
 				return;
 			
 			String[] idStrings = value.toString().split(" ");
@@ -258,11 +268,57 @@ public class KurzerDraht {
 			outValue.setActors(actorSet);
 			context.write(outKey, outValue);
 			
+			
 			outKey.set(3, id2);
 			actorSet = new HashSet<>();
 			actorSet.add(id1);
 			outValue.setActors(actorSet);
 			context.write(outKey, outValue);
+			
+		}
+	}
+	
+	public static class DistanceMapper extends Mapper<Object, Text, IntPairWritable, MapValue> {
+		
+		private final IntPairWritable outKey = new IntPairWritable(2,0);
+		private final MapValue outValue = new MapValue(2);
+		
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			String[] valueArray = value.toString().split("\t");
+			int id = Integer.parseInt(valueArray[0]);
+			int distance = Integer.parseInt(valueArray[1]);
+			
+			outKey.setY(id);
+			outValue.setDistance(distance);
+			
+			context.write(outKey, outValue);
+		}
+	}
+	
+	public static class MyPartitioner extends Partitioner<IntPairWritable, MapValue> {
+
+		@Override
+		public int getPartition(IntPairWritable key, MapValue value, int numPartitions) {
+			return key.getY() % numPartitions;
+		}
+		
+	}
+	
+	public static class KeyOrderComparator extends WritableComparator {
+		
+		public KeyOrderComparator() {
+			super(IntPairWritable.class, true);
+		}
+		
+		@Override
+		public int compare(WritableComparable a, WritableComparable b) {
+			IntPairWritable left = (IntPairWritable) a;
+			IntPairWritable right = (IntPairWritable) b;
+			
+			int dist = Integer.compare(left.getY(), right.getY());
+			if(dist != 0)
+				return dist;
+			return Integer.compare(left.getX(), right.getX());
 		}
 	}
 	
@@ -276,7 +332,7 @@ public class KurzerDraht {
 			IntPairWritable left = (IntPairWritable) a;
 			IntPairWritable right = (IntPairWritable) b;
 			
-			return left.getY() - right.getY();
+			return new Integer(left.getY()).compareTo(new Integer(right.getY()));
 		}
 	}
 	
@@ -289,6 +345,8 @@ public class KurzerDraht {
 			int id = key.getY();
 			int distance = -1;
 			Iterator<MapValue> valueIterator = values.iterator();
+			
+			System.out.println("ABCD Reduce actor " + id);
 			
 			while(valueIterator.hasNext() && distance == -1) {
 				MapValue value = valueIterator.next();
@@ -303,7 +361,7 @@ public class KurzerDraht {
 					return;
 				}
 			}
-			
+			int num = 0;
 			while(valueIterator.hasNext()) {
 				MapValue value = valueIterator.next();
 				switch(value.getValueType()) {
@@ -311,13 +369,17 @@ public class KurzerDraht {
 					distance = distance <= value.getDistance() ? distance : value.getDistance();
 					break;
 				case 3:
-					for(int actor : value.getAdjacentActors()) {
+					num += value.getAdjacentActors().size();
+					for(int actor : value.getAdjacentActors()) {				
 						outKey.set(actor);
 						outValue.set(distance + 1);
 						context.write(outKey, outValue);
 					}
+					break;
 				}
 			}
+			System.out.println("ABCD Distance to target: " + distance);
+			System.out.println("ABCD Num of adjacent actors: " + num);
 			
 			outKey.set(id);
 			outValue.set(distance);
@@ -328,48 +390,132 @@ public class KurzerDraht {
 	
 	public static class DistanceCombiner extends Reducer<IntPairWritable, MapValue, IntPairWritable, MapValue> {
 		
-		private final IntPairWritable outKey = new IntPairWritable(1,1);
-		private final MapValue outValue1 = new MapValue();
-		private final MapValue outValue2 = new MapValue(3);
+		private final MapValue outValue = new MapValue();
 		
 		public void reduce(IntPairWritable key, Iterable<MapValue> values, Context context) throws IOException, InterruptedException {
-			int id = key.getY();
-			int distance = -1;
+			
 			Iterator<MapValue> valueIterator = values.iterator();
 			
 			while(valueIterator.hasNext()) {
 				MapValue value = valueIterator.next();
+				
 				switch(value.getValueType()) {
 				case 1:
-					distance = 1;
+					outValue.setAdjacentToTarget();
+					context.write(key, outValue);
 					break;
 				case 2:
-					if(distance == -1)
-						distance = value.getDistance();
-					distance = distance <= value.getDistance() ? distance : value.getDistance();
+					combineDistance(value, valueIterator);
+					context.write(key, outValue);
 					break;
 				case 3:
-					outValue2.addActors(value.getAdjacentActors());
+					combineAdjacentActors(value, valueIterator);
+					context.write(key, outValue);
+					break;
 				}
-			}
-			if(distance == 1) {
-				outKey.set(1, id);
-				outValue1.setAdjacentToTarget();
-				context.write(outKey, outValue1);
-			} else if(distance != -1) {
-				outKey.set(2, id);
-				outValue1.setDistance(distance);
-				context.write(outKey, outValue1);
-			} else {
-				outKey.set(3, id);
-				context.write(outKey, outValue2);
-			}
+			}		
+		}
+
+		private void combineDistance (MapValue value, Iterator<MapValue> values)  {
+			int distance = value.getDistance();
 			
+			while(values.hasNext() && value.getValueType() == 2) {
+				value = values.next();
+				distance = distance <= value.getDistance()? distance : value.getDistance();
+			}
+			outValue.setDistance(distance);
+		}
+
+		private void combineAdjacentActors (MapValue value, Iterator<MapValue> values) {
+			
+			outValue.setValueType(3);
+			outValue.setActors(value.getAdjacentActors());
+			
+			while(values.hasNext() && value.getValueType() == 3) {
+				value = values.next();
+				outValue.addActors(value.getAdjacentActors());
+			}
 		}
 	}
+	
+	public int run(String[] args) throws Exception {
+		if (args.length!=2) {
+			System.err.printf("Usage: %s [generic options] <input> <output>\n",getClass().getSimpleName());
+			ToolRunner.printGenericCommandUsage(System.err);
+			return -1;
+		}
+		Configuration config = new Configuration();
+		Job job = Job.getInstance(config, KurzerDraht.class.getSimpleName());
+		Path input = new Path(args[0]);
+		FileInputFormat.addInputPath(job, input);
+		FileOutputFormat.setOutputPath(job, new Path(args[1] + "/job0"));
+		
+		job.setJarByClass(KurzerDraht.class);
+		job.setMapperClass(ContactMapper.class);
+		job.setCombinerClass(DistanceCombiner.class);
+		job.setReducerClass(DistanceReducer.class);
+		job.setMapOutputKeyClass(IntPairWritable.class);
+		job.setMapOutputValueClass(MapValue.class);
+		job.setOutputKeyClass(IntWritable.class);
+		job.setOutputValueClass(IntWritable.class);
+		
+		System.out.println("ABCD Phase 0");
+		System.out.println("ABCD \n------------------------");
+		
+		job.waitForCompletion(true);
+		
+		for(int i = 0; i < 2; i++) {
+			
+			Path tempInput = new Path(args[1] + "/job" + i);
+			job = Job.getInstance(config, KurzerDraht.class.getSimpleName());
+			MultipleInputs.addInputPath(job, input, TextInputFormat.class, ContactMapper.class);
+			MultipleInputs.addInputPath(job, tempInput, TextInputFormat.class, DistanceMapper.class);
+			FileOutputFormat.setOutputPath(job, new Path(args[1] + "/job" + (i+1)));
+			
+			job.setJarByClass(KurzerDraht.class);
+			job.setCombinerClass(DistanceCombiner.class);
+			job.setReducerClass(DistanceReducer.class);
+			job.setMapOutputKeyClass(IntPairWritable.class);
+			job.setMapOutputValueClass(MapValue.class);
+			job.setOutputKeyClass(IntWritable.class);
+			job.setOutputValueClass(IntWritable.class);
+			
+			System.out.println("ABCD Phase" + (i+ 1));
+			System.out.println("ABCD \n------------------------");
+			
+			job.waitForCompletion(true);
+			/*
+			try(FileSystem fs = input.getFileSystem(getConf())) {
+				fs.delete(tempInput, true);
+			}
+			*/
+		}
+		
+		
+		
+		job = Job.getInstance(config, KurzerDraht.class.getSimpleName());
+		
+		FileInputFormat.addInputPath(job, new Path(args[1] + "/job2"));
+		FileOutputFormat.setOutputPath(job, new Path(args[1] + "/final"));
+		
+		job.setJarByClass(KurzerDraht.class);
+		job.setMapperClass(DistanceMapper.class);
+		job.setCombinerClass(DistanceCombiner.class);
+		job.setReducerClass(DistanceReducer.class);
+		job.setMapOutputKeyClass(IntPairWritable.class);
+		job.setMapOutputValueClass(MapValue.class);
+		job.setOutputKeyClass(IntWritable.class);
+		job.setOutputValueClass(IntWritable.class);
+		
+		System.out.println("ABCD Phase 3");
+		System.out.println("ABCD \n------------------------");
+		
+		return job.waitForCompletion(true) ? 0 : 1;
+	}
 
-	public static void main(String[] args) {
-		// TODO Auto-generated method stub
+	public static void main(String[] args) throws Exception {
+		int exitcode = ToolRunner.run(new KurzerDraht(), args);
+		System.exit(exitcode);
 
 	}
 
