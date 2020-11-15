@@ -31,6 +31,16 @@ public class MatMul extends Configured implements Tool {
 		protected IntTrippleWritable outKey =  new IntTrippleWritable();
 		protected DoubleWritable outValue = new DoubleWritable();
 		
+		protected int rowCount;
+		protected int colCount;
+		
+		public void setup(Context context) throws IOException {
+			Configuration conf = context.getConfiguration();
+			
+			rowCount = conf.getInt("ROWCOUNT", 0);
+			colCount = conf.getInt("COLCOUNT", 0);
+		}
+		
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String[] args = value.toString().split("\t");
 			int rowIndex = Integer.parseInt(args[0]);
@@ -50,7 +60,7 @@ public class MatMul extends Configured implements Tool {
 		@Override
 		protected void writeToContext(int rowIndex, int colIndex, Context context) throws IOException, InterruptedException {
 			outKey.set(rowIndex, colIndex, 0);
-			for(int i = 0; i < rightColumnCount; i++) {
+			for(int i = 0; i < colCount; i++) {
 				outKey.setZ(i);
 				context.write(outKey, outValue);
 			}
@@ -63,7 +73,7 @@ public class MatMul extends Configured implements Tool {
 		@Override
 		protected void writeToContext(int rowIndex, int colIndex, Context context) throws IOException, InterruptedException {
 			outKey.set(0, rowIndex, colIndex);
-			for(int i = 0; i < leftRowCount; i++) {
+			for(int i = 0; i < rowCount; i++) {
 				outKey.setX(i);
 				context.write(outKey, outValue);
 			}		
@@ -185,7 +195,8 @@ public class MatMul extends Configured implements Tool {
 		Configuration conf = getConf();
 		
 		getMatrixDimensions(args[1], args[2]);
-		
+		conf.setInt("ROWCOUNT", MatMul.leftRowCount);
+		conf.setInt("COLCOUNT", MatMul.rightColumnCount);
 		Job firstJob = getFirstJob(conf, args[0], args[1], args[2], args[3]);
 		firstJob.waitForCompletion(true);
 		
@@ -195,8 +206,8 @@ public class MatMul extends Configured implements Tool {
 	}
 	
 	public void getMatrixDimensions(String input0, String input1) {
-		String[] input0Array = input0.split(".")[0].split("-");
-		String[] input1Array = input1.split(".")[0].split("-");
+		String[] input0Array = input0.split("\\.")[0].split("-");
+		String[] input1Array = input1.split("\\.")[0].split("-");
 		MatMul.leftRowCount = Integer.parseInt(input0Array[1]);
 		MatMul.rightColumnCount = Integer.parseInt(input1Array[2]);
 	}
