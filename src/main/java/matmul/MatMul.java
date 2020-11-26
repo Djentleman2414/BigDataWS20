@@ -7,174 +7,141 @@ import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableComparable;
+import org.apache.hadoop.io.WritableComparator;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.MultipleInputs;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-import types.DoublePairWritable;
+import types.IntDoubleWritable;
 import types.IntPairWritable;
 import types.IntTrippleWritable;
 
 public class MatMul extends Configured implements Tool {
-	
+
 	protected static int leftRowCount = 0;
 	protected static int rightColumnCount = 0;
-	
-	public static abstract class MatrixMapper extends Mapper<Object, Text, IntTrippleWritable, DoubleWritable> {
-		protected IntTrippleWritable outKey =  new IntTrippleWritable();
-		protected DoubleWritable outValue = new DoubleWritable();
-		
+
+	public static abstract class MatrixMapper extends Mapper<Object, Text, IntTrippleWritable, IntDoubleWritable> {
+		protected IntTrippleWritable outKey = new IntTrippleWritable();
+		protected IntDoubleWritable outValue = new IntDoubleWritable();
+
 		protected int rowCount;
 		protected int colCount;
-		
+
 		public void setup(Context context) throws IOException {
 			Configuration conf = context.getConfiguration();
-			
+
 			rowCount = conf.getInt("ROWCOUNT", 0);
 			colCount = conf.getInt("COLCOUNT", 0);
 		}
-		
+
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String[] args = value.toString().split("\t");
 			int rowIndex = Integer.parseInt(args[0]);
 			int colIndex = Integer.parseInt(args[1]);
 			double val = Double.parseDouble(args[2]);
-			if(val != 0) {
-				outValue.set(val);
+			if (val != 0) {
+				outValue.setDouble(val);
 				writeToContext(rowIndex, colIndex, context);
-			}		
+			}
 		}
-		
-		protected abstract void writeToContext(int rowIndex, int colIndex, Context context) throws IOException, InterruptedException;
+
+		protected abstract void writeToContext(int rowIndex, int colIndex, Context context)
+				throws IOException, InterruptedException;
 	}
-	
+
 	public static class LeftMapper extends MatrixMapper {
 
 		@Override
-		protected void writeToContext(int rowIndex, int colIndex, Context context) throws IOException, InterruptedException {
-			outKey.set(rowIndex, colIndex, 0);
-			for(int i = 0; i < colCount; i++) {
-				outKey.setZ(i);
+		protected void writeToContext(int rowIndex, int colIndex, Context context)
+				throws IOException, InterruptedException {
+			outKey.set(rowIndex, 0, colIndex);
+			outValue.setInt(colIndex);
+			for (int i = 0; i < colCount; i++) {
+				outKey.setY(i);
 				context.write(outKey, outValue);
 			}
 		}
-		
+
 	}
-	
+
 	public static class RightMapper extends MatrixMapper {
 
 		@Override
-		protected void writeToContext(int rowIndex, int colIndex, Context context) throws IOException, InterruptedException {
-			outKey.set(0, rowIndex, colIndex);
-			for(int i = 0; i < rowCount; i++) {
+		protected void writeToContext(int rowIndex, int colIndex, Context context)
+				throws IOException, InterruptedException {
+			outKey.set(0, colIndex, rowIndex);
+			outValue.setInt(rowIndex);
+			for (int i = 0; i < rowCount; i++) {
 				outKey.setX(i);
 				context.write(outKey, outValue);
-			}		
-		}
-	}
-
-	public static class MatMulReducer1 extends Reducer<IntTrippleWritable, DoubleWritable, IntPairWritable, DoublePairWritable> {
-		private IntPairWritable outKey = new IntPairWritable();
-		private DoublePairWritable outValue = new DoublePairWritable();
-		
-		public void reduce(IntTrippleWritable key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
-			boolean toggle = true;
-			double val1 = 0;
-			double val2 = 0;
-			
-			for(DoubleWritable value : values) {
-				if(toggle) {
-					val1 = value.get();
-					toggle = !toggle;
-				} else {
-					val2 = value.get();
-				}
-				
-				if(val2 != 0) {
-					outKey.setX(key.getX());
-					outKey.setY(key.getZ());
-					outValue.set(val1, val2);
-					context.write(outKey, outValue);
-				}
 			}
 		}
 	}
-	
-	// 2nd job
-	
-	public static class MatMulPartitioner extends Partitioner<IntPairWritable, DoubleWritable> {
 
-		@Override
-		public int getPartition(IntPairWritable key, DoubleWritable value, int numPartitions) {
-			return Integer.hashCode(key.getX()) % numPartitions;
-		}
-		
-	}
-	
-	public static class MatMulMapper2 extends Mapper<Object, Text, IntPairWritable, DoubleWritable> {
-		
+	public static class MatMulReducer
+			extends Reducer<IntTrippleWritable, IntDoubleWritable, IntPairWritable, DoubleWritable> {
 		private IntPairWritable outKey = new IntPairWritable();
 		private DoubleWritable outValue = new DoubleWritable();
-		
-		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-			String[] args = value.toString().split("\t");
-			int rowIndex = Integer.parseInt(args[0]);
-			int colIndex = Integer.parseInt(args[1]);
-			double val1 = Double.parseDouble(args[2]);
-			double val2 = Double.parseDouble(args[3]);
+
+		public void reduce(IntTrippleWritable key, Iterable<IntDoubleWritable> values, Context context)
+				throws IOException, InterruptedException {
 			
-			outKey.set(rowIndex, colIndex);
-			outValue.set(val1 * val2);
-			
+			double temp = 0;
+			double sum = 0;
+			boolean toggle = true;
+			int lastPos = 0;
+			for (IntDoubleWritable value : values) {
+				if (toggle || lastPos != value.getInt()) { // (L,0,1),(R,0,2),(L,1,2),(L,2,4),(R,2,2)  -> überspringen (R,1,...)
+					temp = value.getDouble();
+					lastPos = value.getInt();
+					toggle = false;
+				} else {
+					sum += temp * value.getDouble();
+					temp = 0;
+					toggle = true;
+				}
+			}
+			outKey.set(key.getX(), key.getY());
+			outValue.set(sum);
 			context.write(outKey, outValue);
 		}
 	}
 	
-	public static class MatMulReducer2 extends Reducer<IntPairWritable, DoubleWritable, IntPairWritable, DoubleWritable> {
-		
-		private IntPairWritable outKey = new IntPairWritable();
-		private DoubleWritable outValue = new DoubleWritable();
-		
-		private int previousColIndex = -1;
-		
-		public void reduce(IntPairWritable key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
-			outKey.setX(key.getX());
-			outValue.set(0);
-			if(previousColIndex > key.getY()) {
-				while(previousColIndex < MatMul.rightColumnCount - 1) {
-					outKey.setY(++previousColIndex);				
-					context.write(outKey, outValue);
-				}
-				previousColIndex = -1;
-			}
-			
-			while(previousColIndex + 1 != key.getY()) {				
-				outKey.setY(++previousColIndex);
-				context.write(outKey, outValue);
-			}
-			
-			double sum = 0;
-			for(DoubleWritable value : values) {
-				sum += value.get();
-			}
-			outValue.set(sum);
-			context.write(key, outValue);
-			previousColIndex++;
+	
+	public static class MatMulPartitioner extends Partitioner<IntTrippleWritable, IntDoubleWritable> {
+
+		@Override
+		public int getPartition(IntTrippleWritable key, IntDoubleWritable value, int numPartitions) {
+			final int prime = 31;
+			int hashValue = prime * (key.getX() + key.getY());
+			return hashValue % numPartitions;
 		}
 		
-		public void cleanup(Context context) throws IOException, InterruptedException {
-			outValue.set(0);
-			while(previousColIndex < MatMul.rightColumnCount - 1) {
-				outKey.setY(++previousColIndex);			
-				context.write(outKey, outValue);
-			}
+	}
+	
+	
+	public static class MatMulGroupingComparator extends WritableComparator {
+		
+		public MatMulGroupingComparator() {
+			super(IntTrippleWritable.class, true);
+		}
+		
+		public int compare(WritableComparable a, WritableComparable b) {
+			IntTrippleWritable left = (IntTrippleWritable) a;
+			IntTrippleWritable right = (IntTrippleWritable) b;
+			int dist = Integer.compare(left.getX(), right.getX());
+			if (dist != 0)
+				return dist;
+			
+			return Integer.compare(left.getY(), right.getY());
 		}
 	}
 
@@ -186,77 +153,51 @@ public class MatMul extends Configured implements Tool {
 	@Override
 	public int run(String[] args) throws Exception {
 		// arguments: folder matrix0 matrix1 outputFolder
-		if (args.length!=4) {
-			System.err.printf("Usage: %s [generic options] <input> <output>\n",getClass().getSimpleName());
+		if (args.length != 4) {
+			System.err.printf("Usage: %s [generic options] <folder> <input1> <input2> <output>\n", getClass().getSimpleName());
 			ToolRunner.printGenericCommandUsage(System.err);
 			return -1;
 		}
-		
+
 		Configuration conf = getConf();
+
+		getMatrixDimensions(conf, args[1], args[2]);
 		
-		getMatrixDimensions(args[1], args[2]);
-		conf.setInt("ROWCOUNT", MatMul.leftRowCount);
-		conf.setInt("COLCOUNT", MatMul.rightColumnCount);
-		Job firstJob = getFirstJob(conf, args[0], args[1], args[2], args[3]);
-		firstJob.waitForCompletion(true);
-		
-		Job secondJob = getSecondJob(conf, args[3]);
-			
-		return secondJob.waitForCompletion(true) ? 0 : -1;
+		Job job = getJob(conf, args[0], args[1], args[2], args[3]);
+		return job.waitForCompletion(true) ? 0 : -1;
 	}
-	
-	public void getMatrixDimensions(String input0, String input1) {
+
+	public void getMatrixDimensions(Configuration conf, String input0, String input1) {
 		String[] input0Array = input0.split("\\.")[0].split("-");
 		String[] input1Array = input1.split("\\.")[0].split("-");
-		MatMul.leftRowCount = Integer.parseInt(input0Array[1]);
-		MatMul.rightColumnCount = Integer.parseInt(input1Array[2]);
+		conf.setInt("ROWCOUNT", Integer.parseInt(input0Array[1]));
+		conf.setInt("COLCOUNT", Integer.parseInt(input1Array[2]));
 	}
-	
-	public Job getFirstJob(Configuration conf, String inputFolder, String matrix0, String matrix1, String outputFolder) throws IOException {
+
+	public Job getJob(Configuration conf, String inputFolder, String matrix0, String matrix1, String outputFolder)
+			throws IOException {
 		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
-		if(!inputFolder.endsWith("/"))
+		if (!inputFolder.endsWith("/"))
 			inputFolder += "/";
-		if(!outputFolder.endsWith("/"))
+		if (!outputFolder.endsWith("/"))
 			outputFolder += "/";
 		MultipleInputs.addInputPath(job, new Path(inputFolder + matrix0), TextInputFormat.class, LeftMapper.class);
 		MultipleInputs.addInputPath(job, new Path(inputFolder + matrix1), TextInputFormat.class, RightMapper.class);
-		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "temp"));
-			
+		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "result"));
+
 		job.setJarByClass(MatMul.class);
-		job.setReducerClass(MatMulReducer1.class);
-		
+		job.setReducerClass(MatMulReducer.class);
+
 		job.setMapOutputKeyClass(IntTrippleWritable.class);
-		job.setMapOutputValueClass(DoubleWritable.class);
-		job.setOutputKeyClass(IntPairWritable.class);
-		job.setOutputValueClass(DoublePairWritable.class);
-		
-		job.setNumReduceTasks(10);
-		
-		return job;
-	}
-	
-	public Job getSecondJob(Configuration conf, String folder) throws IOException {
-		if(!folder.endsWith("/"))
-			folder += "/";
-		
-		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
-		FileInputFormat.addInputPath(job, new Path(folder + "temp/*"));
-		FileOutputFormat.setOutputPath(job, new Path(folder + "final/"));
-		
-		job.setJarByClass(MatMul.class);
-		job.setMapperClass(MatMulMapper2.class);;
-		job.setReducerClass(MatMulReducer2.class);
-		
-		job.setPartitionerClass(MatMulPartitioner.class);
-		
-		job.setMapOutputKeyClass(IntPairWritable.class);
-		job.setMapOutputValueClass(DoubleWritable.class);
+		job.setMapOutputValueClass(IntDoubleWritable.class);
 		job.setOutputKeyClass(IntPairWritable.class);
 		job.setOutputValueClass(DoubleWritable.class);
 		
+		job.setPartitionerClass(MatMulPartitioner.class);
+		job.setGroupingComparatorClass(MatMulGroupingComparator.class);
+
 		job.setNumReduceTasks(10);
-		
+
 		return job;
 	}
-
 }

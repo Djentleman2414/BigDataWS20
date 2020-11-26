@@ -34,9 +34,22 @@ public class IntDoubleWritable implements WritableComparable<IntDoubleWritable>,
 	public String toString() {
 		return i + "\t" + v;
 	}
+	
+	public void set(int i, double v) {
+		this.i = i;
+		this.v = v;
+	}
+	
+	public void setInt(int i) {
+		this.i = i;
+	}
 
 	public int getInt() {
 		return i;
+	}
+	
+	public void setDouble(double v) {
+		this.v = v;
 	}
 
 	public double getDouble() {
