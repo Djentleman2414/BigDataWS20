@@ -1,6 +1,7 @@
 package assignment.logsam;
 
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.Arrays;
 
 import org.apache.hadoop.io.DoubleWritable;
@@ -35,9 +36,21 @@ public class LogStichprobeTest {
 	MapDriver<Object, Text, IntWritable, DoublePairWritable> mapDriver2;
 	ReduceDriver<IntWritable, DoublePairWritable, Text, DoubleWritable> reduceDriver2;
 	MapReduceDriver<Object, Text, IntWritable, DoublePairWritable, Text, DoubleWritable> mapReduceDriver2;
+	/**
+	static {
+	    String OS = System.getProperty("os.name").toLowerCase();
+
+	    if (OS.contains("win")) {
+	      System.setProperty("hadoop.home.dir", Paths.get("winutils").toAbsolutePath().toString());
+	    } else {
+	      System.setProperty("hadoop.home.dir", "/");
+	    }
+	  }
+	  */
 
 	@Before
-	public void setup() {
+	public void setup() {		
+		
 		LogStichprobeMapperEins mapper1 = new LogStichprobeMapperEins();
 		LogStichprobeMapperZwei mapper2 = new LogStichprobeMapperZwei();
 		LogStichprobeReducerEins reducer1 = new LogStichprobeReducerEins();
@@ -60,6 +73,7 @@ public class LogStichprobeTest {
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	@Test
 	public void mapper1Test() throws IOException {
+		//System.setProperty("hadoop.home.dir", "/");
 		IntWritable key = new IntWritable();
 		Pair[] inputs = { new Pair(key, new Text("16-05-01 00:25 faf9785e eb4222ab")),
 				new Pair(key, new Text("16-06-01 00:55 faf4b9be eb438cab")),
