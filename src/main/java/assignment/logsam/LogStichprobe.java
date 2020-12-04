@@ -5,6 +5,8 @@ import java.util.Iterator;
 import java.util.TreeMap;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.util.XMLUtils.Stanza;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
@@ -13,9 +15,14 @@ import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.io.WritableComparator;
+import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
 
 import com.google.common.collect.Iterables;
 
@@ -27,9 +34,9 @@ import types.IntDoubleWritable;
 import types.IntTrippleWritable;
 import types.LongPairWritable;
 
-public class LogStichprobe {
+public class LogStichprobe extends Configured implements Tool {
 
-	protected static final double anteil = 0.1;
+	public static double anteil = 0.1;
 
 	/**
 	 * In der VL wurden zwei Varianten für "faire" Stichproben vorgestellt. Für die
@@ -89,15 +96,13 @@ public class LogStichprobe {
 	public static class LogStichprobeReducerEins
 			extends Reducer<LongPairWritable, LongWritable, IntWritable, DoubleWritable> {
 
-		private static int summeKunden = 0;
-		private static double summeAnteile = 0;
+		private int summeKunden = 0;
+		private double summeAnteile = 0;
 
 		public void reduce(LongPairWritable key, Iterable<LongWritable> values, Context c)
 				throws IOException, InterruptedException {
 			int angeschauteProdukte = 0;
 			int mehrfachabfragen = 0;
-
-			int i = Iterables.size(values);
 
 			/**
 			 * Beispiel: 0 1 2 2 2 3 4 4
@@ -113,7 +118,6 @@ public class LogStichprobe {
 
 			long vorherigesProdukt = 0;
 			boolean schongesehen = false;
-
 			for (LongWritable value : values) {
 				long v = value.get();
 				if (v == vorherigesProdukt) {
@@ -129,11 +133,7 @@ public class LogStichprobe {
 			}
 
 			double anteilKunde = 0;
-			if (mehrfachabfragen != 0) {
-				anteilKunde = (double) angeschauteProdukte / mehrfachabfragen;
-			} else {
-				anteilKunde = 1;
-			}
+				anteilKunde = (double) mehrfachabfragen / angeschauteProdukte;
 			summeAnteile += anteilKunde;
 			summeKunden++;
 
@@ -149,45 +149,39 @@ public class LogStichprobe {
 		}
 	}
 
-	public static class LogStichprobeMapperZwei extends Mapper<Object, Text, IntWritable, DoublePairWritable> {
+	public static class LogStichprobeMapperZwei extends Mapper<Object, Text, IntWritable, IntDoubleWritable> {
 
 		private static final IntWritable outKey = new IntWritable();
-		private static final DoublePairWritable outValue = new DoublePairWritable();
+		private static final IntDoubleWritable outValue = new IntDoubleWritable();
 
 		public void map(Object key, Text value, Context c) throws IOException, InterruptedException {
 
-			String[] values = value.toString().split(" ");
+			String[] values = value.toString().split("\t");
 			int summeKunden = Integer.parseInt(values[0]);
 			double summeAnteile = Double.parseDouble(values[1]);
 
-			outKey.set(0);
 			outValue.set(summeKunden, summeAnteile);
 			c.write(outKey, outValue);
 		}
 	}
 
 	public static class LogStichprobeReducerZwei
-			extends Reducer<IntWritable, DoublePairWritable, Text, DoubleWritable> {
+			extends Reducer<IntWritable, IntDoubleWritable, Text, DoubleWritable> {
 
-		private static double summeKunden = 0;
-		private static double summeAnteile = 0;
+		private double summeKunden = 0;
+		private double summeAnteile = 0;
 
-		public void reduce(IntWritable key, Iterable<DoublePairWritable> values, Context c)
+		public void reduce(IntWritable key, Iterable<IntDoubleWritable> values, Context c)
 				throws IOException, InterruptedException {
-			for (DoublePairWritable dp : values) {
-				summeKunden += dp.getX();
-				summeAnteile += dp.getY();
+			for (IntDoubleWritable dp : values) {
+				summeKunden += dp.getInt();
+				summeAnteile += dp.getDouble();
 			}
-
-		}
-
-		/**
-		 * Hier wird dann das Ergebnis überschrieben
-		 */
-		public void cleanup(Context c) throws IOException, InterruptedException {
+			
 			Text outKey = new Text("Der Anteil an Mehrfachabfragen beträgt:");
 			DoubleWritable outValue = new DoubleWritable(summeAnteile / summeKunden);
 			c.write(outKey, outValue);
+
 		}
 	}
 
@@ -203,11 +197,13 @@ public class LogStichprobe {
 		}
 
 		public int compare(WritableComparable a, WritableComparable b) {
-			int kundenVergleich = (int) (((LongPairWritable) a).getY() - ((LongPairWritable) b).getY());
+			LongPairWritable left = (LongPairWritable) a;
+			LongPairWritable right = (LongPairWritable) b;
+			int kundenVergleich = Long.compare(left.getY(), right.getY());
 			if (kundenVergleich != 0) {
 				return kundenVergleich;
 			}
-			return (int) (((LongPairWritable) a).getX() - ((LongPairWritable) b).getX());
+			return Long.compare(left.getX(), right.getX());
 		}
 	}
 
@@ -221,8 +217,10 @@ public class LogStichprobe {
 		}
 
 		public int compare(WritableComparable a, WritableComparable b) {
+			LongPairWritable left = (LongPairWritable) a;
+			LongPairWritable right = (LongPairWritable) b;
 			// Nur Vergleich nach Kunde für's Grouping nötig
-			return (int) (((LongPairWritable) a).getY() - ((LongPairWritable) b).getY());
+			return Long.compare(left.getY(), right.getY());
 		}
 	}
 
@@ -236,6 +234,72 @@ public class LogStichprobe {
 			return (int) (key.getY() % numPartitions);
 		}
 
+	}
+	
+	public static void main(String[] args) throws Exception {
+		System.exit(ToolRunner.run(new LogStichprobe(), args));
+	}
+
+	@Override
+	public int run(String[] args) throws Exception {
+		if (args.length != 2) {
+			System.err.printf("Usage: %s [generic options] <input> <output>\n", getClass().getSimpleName());
+			ToolRunner.printGenericCommandUsage(System.err);
+			return -1;
+		}
+		
+		Job job = getFirstJob(args);
+		
+		if(!job.waitForCompletion(true))
+			return -1;
+		
+		job = getSecondJob(args);
+		
+		return job.waitForCompletion(true) ? 0 : -1;
+	}
+	
+	private Job getFirstJob(String[] args) throws IllegalArgumentException, IOException {
+		Job job = Job.getInstance(getConf(), getClass().getSimpleName());
+		
+		if(!args[1].endsWith("/"))
+			args[1] += "/";
+		FileInputFormat.addInputPath(job, new Path(args[0]));
+		FileOutputFormat.setOutputPath(job, new Path(args[1] + "temp"));
+		
+		job.setJarByClass(LogStichprobe.class);
+		job.setMapperClass(LogStichprobeMapperEins.class);
+		job.setReducerClass(LogStichprobeReducerEins.class);
+		
+		job.setMapOutputKeyClass(LongPairWritable.class);
+		job.setMapOutputValueClass(LongWritable.class);
+		
+		job.setOutputKeyClass(IntWritable.class);
+		job.setOutputValueClass(DoubleWritable.class);
+		
+		job.setNumReduceTasks(10);
+		
+		return job;		
+	}
+	
+	private Job getSecondJob(String[] args) throws IOException {
+		Job job = Job.getInstance(getConf(), getClass().getSimpleName());
+		
+		if(!args[1].endsWith("/"))
+			args[1] += "/";
+		FileInputFormat.addInputPath(job, new Path(args[1] + "temp"));
+		FileOutputFormat.setOutputPath(job, new Path(args[1] + "final"));
+		
+		job.setJarByClass(LogStichprobe.class);
+		job.setMapperClass(LogStichprobeMapperZwei.class);
+		job.setReducerClass(LogStichprobeReducerZwei.class);
+		
+		job.setMapOutputKeyClass(IntWritable.class);
+		job.setMapOutputValueClass(IntDoubleWritable.class);
+		
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(DoubleWritable.class);
+		
+		return job;
 	}
 
 }
