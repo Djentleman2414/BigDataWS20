@@ -1,17 +1,14 @@
 package assignment.logsam;
 
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.TreeMap;
+import java.util.HashMap;
+import java.util.Map.Entry;
 
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hdfs.util.XMLUtils.Stanza;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.io.WritableComparator;
@@ -24,33 +21,22 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-import com.google.common.collect.Iterables;
-
-import org.apache.hadoop.mapreduce.Mapper.Context;
-
-import types.DoublePairWritable;
-import types.FloatArrayWritable;
 import types.IntDoubleWritable;
-import types.IntTrippleWritable;
 import types.LongPairWritable;
 
 public class LogStichprobe extends Configured implements Tool {
 
-	public static double anteil = 0.1;
-
-	/**
-	 * In der VL wurden zwei Varianten für "faire" Stichproben vorgestellt. Für die
-	 * erste Variante muss bekannt sein, wie groß die Stichprobe absolut sein soll
-	 * (Wert k). Für die zweite Variante muss bekannt sein, welchen Anteil die
-	 * Stichproble an der Gesamtmenge hat (in dieser aufgabe gegeben). Deswegen habe
-	 * ich einfach diese Art der Stichprobenziehung gewählt.
-	 * 
-	 */
-	public static class LogStichprobeMapperEins extends Mapper<Object, Text, LongPairWritable, LongWritable> {
+	
+	public static class PrimitiveLogfileMapper extends Mapper<Object, Text, LongPairWritable, LongWritable> {
 		// id in long parsen dann longpairwritable
 
+		public static double anteil = 0.1;
 		private static final LongPairWritable outKey = new LongPairWritable();
 		private static final LongWritable outValue = new LongWritable();
+		
+		public void setup(Context context) {
+			anteil = context.getConfiguration().getDouble("PERCENTAGE", 0.1);
+		}
 
 		public void map(Object key, Text value, Context c) throws IOException, InterruptedException {
 			if (Math.random() <= anteil) {
@@ -71,6 +57,93 @@ public class LogStichprobe extends Configured implements Tool {
 			}
 		}
 
+	}
+	
+	
+	/*
+	 * Alle Produkt-IDs der Aufrufe werden in dem Array "productIds" gespeichert, dabei wird für jeden Nutzer ein Bereich von 100 Einträgen reserviert.
+	 * Es können also maximal 1000 Kunden gleichzeitig verarbeitet werden. Wird der 900 Kunde in die Datenstruktur übernommen, werden noch 100 Einträge
+	 * verarbeitet und danach weggeschrieben. Die Daten werden auch weggeschrieben, wenn für einen Kunden der 100. Eintrag kommt.
+	 * Nachdem die Daten weggeschrieben wurden, wird die Datenstruktur resettet um die restlichen Daten samplen zu können.
+	 * Die Idee ist, von jedem Kunden ~10% der Anfragen zu samplen.
+	 * Welche Einträge von einem Kunden weggeschrieben werden, wird über ein Reservoir-Sampling Verfahren bestimmt.
+	 * Von jedem Kunden (der mehr als einen Eintrag in productIds hat) werden min. 2 Einträge übernommen, maximal aber k = percentage * numOfCalls
+	 */
+	public static class LogfileMapper extends Mapper<Object, Text, LongPairWritable, LongWritable> {
+
+		public static double percentage = 0.1;
+
+		private HashMap<Long, Integer> callMap = new HashMap<>();
+		private long[] productIds = new long[100000];
+		private boolean full;
+		private int lastEntries = 100;
+		
+		private LongPairWritable outKey = new LongPairWritable();
+		private LongWritable outValue = new LongWritable();
+		
+		public void setup(Context context) {
+			percentage = context.getConfiguration().getDouble("PERCENTAGE", 0.1);
+		}
+		
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			if(full) {
+				turnToIterator();
+				writeToContext(context);
+			}
+			
+			String[] values = value.toString().split(" ");
+			addCall(Long.parseLong(values[2], 16), Long.parseLong(values[3], 16));
+		}
+		
+		public void cleanup(Context context) throws IOException, InterruptedException {
+			turnToIterator();
+			writeToContext(context);
+		}
+
+		private void addCall(long userId, long productId) {
+			int callIndex = callMap.containsKey(userId) ? callMap.get(userId) : callMap.size() * 100;
+			productIds[callIndex] = productId;
+
+			callIndex++;
+
+			if (callMap.size() >= 900)
+				lastEntries--;
+
+			full = callIndex % 100 == 0 || lastEntries == 0;
+
+			callMap.put(userId, callIndex);
+		}
+
+		private boolean turnToIterator() {
+			for (Entry<Long, Integer> e : callMap.entrySet()) {
+				int startIndex = callMap.get(e.getKey()) / 100 * 100;
+				int numOfCalls = e.getValue() % 100;
+				numOfCalls = numOfCalls != 0 ? numOfCalls : 100;
+				int k = Math.max(2, (int) Math.round(percentage * numOfCalls));
+				for (int n = k; n < numOfCalls; n++) {
+					if ((int) (Math.random() * (n + 1)) < k) {
+						productIds[startIndex + (int) (Math.random() * k)] = productIds[startIndex + n];
+						productIds[startIndex + n] = 0;
+					}
+				}
+			}
+			return true;
+		}
+		
+		private void writeToContext(Context context) throws IOException, InterruptedException {
+			for(long user : callMap.keySet()) {
+				outKey.setY(user);
+				int index = callMap.get(user) / 100 * 100;
+				while(productIds[index] != 0) {
+					outKey.setX(productIds[index]);
+					outValue.set(productIds[index]);
+					context.write(outKey, outValue);
+					productIds[index] = 0;
+					index++;
+				}
+			}
+			callMap.clear();
+		}
 	}
 
 	/**
@@ -242,11 +315,13 @@ public class LogStichprobe extends Configured implements Tool {
 
 	@Override
 	public int run(String[] args) throws Exception {
-		if (args.length != 2) {
-			System.err.printf("Usage: %s [generic options] <input> <output>\n", getClass().getSimpleName());
+		if (args.length != 3) {
+			System.err.printf("Usage: %s [generic options] <input> <output> <percentage>\n", getClass().getSimpleName());
 			ToolRunner.printGenericCommandUsage(System.err);
 			return -1;
 		}
+		
+		getConf().setDouble("PERCENTAGE", Double.parseDouble(args[2]));
 		
 		Job job = getFirstJob(args);
 		
@@ -267,7 +342,9 @@ public class LogStichprobe extends Configured implements Tool {
 		FileOutputFormat.setOutputPath(job, new Path(args[1] + "temp"));
 		
 		job.setJarByClass(LogStichprobe.class);
-		job.setMapperClass(LogStichprobeMapperEins.class);
+		
+
+		job.setMapperClass(LogfileMapper.class);
 		job.setReducerClass(LogStichprobeReducerEins.class);
 		
 		job.setMapOutputKeyClass(LongPairWritable.class);
@@ -275,6 +352,9 @@ public class LogStichprobe extends Configured implements Tool {
 		
 		job.setOutputKeyClass(IntWritable.class);
 		job.setOutputValueClass(DoubleWritable.class);
+		
+		job.setSortComparatorClass(LogStichprobeSortComparator.class);
+		job.setGroupingComparatorClass(LogStichprobeGroupingComparator.class);
 		
 		job.setNumReduceTasks(10);
 		

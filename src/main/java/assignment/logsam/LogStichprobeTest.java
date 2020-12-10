@@ -51,9 +51,9 @@ public class LogStichprobeTest {
 	@Before
 	public void setup() {	
 
-		LogStichprobe.anteil = 1;
+		PrimitiveLogfileMapper.anteil = 1;
 		
-		LogStichprobeMapperEins mapper1 = new LogStichprobeMapperEins();
+		PrimitiveLogfileMapper mapper1 = new PrimitiveLogfileMapper();
 		LogStichprobeMapperZwei mapper2 = new LogStichprobeMapperZwei();
 		LogStichprobeReducerEins reducer1 = new LogStichprobeReducerEins();
 		LogStichprobeReducerEins reducer1_2 = new LogStichprobeReducerEins();
