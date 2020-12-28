@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.Random;
 
 public class MinHash {
-	private static final int LARGE_PRIME = 2147483647;
+	private static final int LARGE_PRIME = 2147483647; // 2^31 - 1
 	
 	private int[] signature;
 	private int[][] hashCoefs;

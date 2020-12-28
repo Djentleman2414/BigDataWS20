@@ -8,77 +8,82 @@ import java.util.Arrays;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.io.WritableComparable;
-import org.apache.hadoop.io.WritableComparator;
+import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 
-import ncdc.IntArrayWritable;
-import types.IntPairWritable;
-import wrdnbh.NachbarschaftPhase1.OutArrayWritable;
-
 public class NachbarschaftPhase2 {
-	
+
 	public static class BucketMapValue implements Writable {
-		
-		private int hash;
-		private int[] neighbors = new int[10000];
+
+		private String word;
+		private int[] neighbors;
 		private int entryCount;
 		
-		public void setHash(int hash) {
-			this.hash = hash;
+		public BucketMapValue() {
+			neighbors = new int[10000];
 		}
 		
-		public int getHash() {
-			return hash;
+		public BucketMapValue(String word, int[] neighbors, int entryCount) {
+			this.word = word;
+			this.neighbors = neighbors;
+			this.entryCount = entryCount;
 		}
-		
+
+		public String getWord() {
+			return word;
+		}
+
+		public void setWord(String word) {
+			this.word = word;
+		}
+
 		public void addNeighbor(int n) {
-			if(entryCount >= neighbors.length) {
+			if (entryCount >= neighbors.length) {
 				int[] newNeighbors = new int[entryCount + 1000];
 				System.arraycopy(neighbors, 0, newNeighbors, 0, entryCount);
 				neighbors = newNeighbors;
 			}
 			neighbors[entryCount++] = n;
 		}
-		
+
 		public int[] getNeighbors() {
 			return neighbors;
 		}
-		
+
 		public int getEntryCount() {
 			return entryCount;
 		}
-		
+
 		public void reset() {
 			entryCount = 0;
 		}
 
 		@Override
 		public void write(DataOutput out) throws IOException {
-			out.writeInt(hash);
+			WritableUtils.writeString(out, word);
 			out.writeInt(entryCount);
-			for(int i = 0; i < entryCount; i++)
+			for (int i = 0; i < entryCount; i++)
 				out.writeInt(neighbors[i]);
 		}
 
 		@Override
 		public void readFields(DataInput in) throws IOException {
-			hash = in.readInt();
+			word = WritableUtils.readString(in);
 			entryCount = in.readInt();
-			if(entryCount >= neighbors.length)
+			if (entryCount >= neighbors.length)
 				neighbors = new int[entryCount];
-			for(int i = 0; i < entryCount; i++)
+			for (int i = 0; i < entryCount; i++)
 				neighbors[i] = in.readInt();
 		}
-		
+
 		@Override
 		public int hashCode() {
 			final int prime = 31;
 			int result = 1;
 			result = prime * result + entryCount;
-			result = prime * result + hash;
 			result = prime * result + Arrays.hashCode(neighbors);
+			result = prime * result + ((word == null) ? 0 : word.hashCode());
 			return result;
 		}
 
@@ -93,30 +98,40 @@ public class NachbarschaftPhase2 {
 			BucketMapValue other = (BucketMapValue) obj;
 			if (entryCount != other.entryCount)
 				return false;
-			if (hash != other.hash)
-				return false;
-			if (!Arrays.equals(neighbors, other.neighbors))
+			for (int i = 0; i < entryCount; i++)
+				if(neighbors[i] != other.neighbors[i])
+					return false;
+			if (word == null) {
+				if (other.word != null)
+					return false;
+			} else if (!word.equals(other.word))
 				return false;
 			return true;
 		}
-		
+
 		public String toString() {
 			StringBuilder sb = new StringBuilder();
-			
-			sb.append("Hash: ").append(hash).append('\n');
+
+			sb.append("Word: ").append(word).append('\n');
 			sb.append("Neighbors: ");
-			for(int i = 0; i < entryCount - 1; i++)
+			for (int i = 0; i < entryCount - 1; i++)
 				sb.append(neighbors[i]).append(' ');
-			sb.append(neighbors[entryCount]);
-			
+			if(entryCount > 0)
+				sb.append(neighbors[entryCount - 1]);
+
 			return sb.toString();
 		}
 		
-		
+		public BucketMapValue clone() {
+			int[] cloneNeighbors = new int[entryCount];
+			System.arraycopy(neighbors, 0, cloneNeighbors, 0, entryCount);
+			return new BucketMapValue(word, cloneNeighbors, entryCount);
+		}
+
 	}
 
 	public static class MinHashMapper extends Mapper<Object, Text, IntWritable, BucketMapValue> {
-		
+
 		public static int SMALL_PRIME = 31;
 
 		private MinHash mh;
@@ -136,96 +151,139 @@ public class NachbarschaftPhase2 {
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String[] hashStrings = value.toString().split("\t");
-			outValue.setHash(Integer.parseInt(hashStrings[0]));
-			
-			
+			outValue.setWord(hashStrings[0]);
+
 			for (int i = 1; i < hashStrings.length; i++) {
 				int hash = Integer.parseInt(hashStrings[i]);
 				outValue.addNeighbor(hash);
 				mh.updateSignature(hash);
 			}
 			setBuckets(mh.getSignature());
-			for(int bucket : buckets) {
+			
+			for (int bucket : buckets) {
 				outKey.set(bucket);
 				context.write(outKey, outValue);
 			}
 			mh.reset();
 			outValue.reset();
 		}
-		
+
 		private void setBuckets(int[] signature) {
 			int hashesPerBand = signature.length / buckets.length;
-			
-			for(int i = 0; i < buckets.length; i++) {
-				int bucket = 0;
-				for(int j = 0; j < hashesPerBand && i * hashesPerBand + j < signature.length; j++) {
-					bucket += (j + 1) * SMALL_PRIME + signature[i * hashesPerBand + j];
+
+			for (int i = 0; i < buckets.length; i++) {
+				int bucketHash = 1;
+				for (int j = 0; j < hashesPerBand && i * hashesPerBand + j < signature.length; j++) {
+					bucketHash = SMALL_PRIME * bucketHash + signature[i * hashesPerBand + j];
 				}
-				buckets[i] = bucket & Integer.MAX_VALUE; // make hashes positive again :D
+				buckets[i] = bucketHash & Integer.MAX_VALUE; // make hashes positive again :D
 			}
 		}
 	}
 
-	public static class SimilarityReducer extends Reducer<IntWritable, IntArrayWritable, IntWritable, IntWritable> {
-		
+	public static class SimilarityReducer extends Reducer<IntWritable, BucketMapValue, Text, Text> {
+
+		public static double minJaccard;
+
+		private Text outKey = new Text();
+		private Text outValue = new Text();
+
+		private NeighborSet[] neighborSets = new NeighborSet[1000];
+		private int entryCount;
+
+		public void setup(Context context) {
+			minJaccard = context.getConfiguration().getDouble("MIN_JACCARD", 0.5);
+		}
+
+		public void reduce(IntWritable key, Iterable<BucketMapValue> values, Context context)
+				throws IOException, InterruptedException {
+			for (BucketMapValue value : values) {
+				if (entryCount == neighborSets.length)
+					expandNeighborSetArray();
+				neighborSets[entryCount++] = new NeighborSet(value.getWord(), value.getEntryCount(),
+						value.getNeighbors());
+			}
+
+			// word1, word2, word3, ...
+			for (int i = 0; i < entryCount - 1; i++) {
+				outKey.set(neighborSets[i].getWord());
+
+				for (int j = i + 1; j < entryCount; j++) {
+					if (neighborSets[i].jaccard(neighborSets[j]) >= minJaccard) {
+						outValue.set(neighborSets[j].getWord());
+						context.write(outKey, outValue);
+					}
+				}
+			}
+			entryCount = 0;
+		}
+
+		private void expandNeighborSetArray() {
+			NeighborSet[] neighborSets = new NeighborSet[entryCount + 1000];
+			System.arraycopy(this.neighborSets, 0, neighborSets, 0, entryCount);
+			this.neighborSets = neighborSets;
+		}
+
 		public static class NeighborSet {
-			
-			int wordHash;
+
+			String word;
 			int[] neighbors;
-			
-			public NeighborSet(int wordHash, int entryCount, int[] neighborSet) {
-				this.wordHash = wordHash;
+
+			public NeighborSet(String word, int entryCount, int[] neighborSet) {
+				this.word = word;
 				neighbors = new int[entryCount];
 				System.arraycopy(neighborSet, 0, neighbors, 0, entryCount);
 			}
-			
+
+			public String getWord() {
+				return word;
+			}
+
+			public void setWord(String word) {
+				this.word = word;
+			}
+
 			public double jaccard(NeighborSet other) {
-				if(other ==  null)
+				if (other == null)
 					return 0;
 				return jaccard(other.neighbors);
 			}
-			
+
 			public double jaccard(int[] otherNeighbors) {
-				if(otherNeighbors == null)
+				if (otherNeighbors == null)
 					return 0;
-				
+
 				int union = 0;
 				int intersection = 0;
-				
+
 				int i = 0;
 				int j = 0;
-				
-				while(true) {
-					while(i < neighbors.length && j < otherNeighbors.length && neighbors[i] == otherNeighbors[j]) {
+
+				while (i < neighbors.length && j < otherNeighbors.length) {
+					while (i < neighbors.length && j < otherNeighbors.length && neighbors[i] == otherNeighbors[j]) {
 						union++;
 						intersection++;
 						i++;
 						j++;
 					}
-					
-					if(neighbors[i] < otherNeighbors[j]) {
-						while(i < neighbors.length &&  neighbors[i] != otherNeighbors[j]) {
+					if(j < otherNeighbors.length)
+						while (i < neighbors.length && neighbors[i] < otherNeighbors[j]) {
 							union++;
 							i++;
 						}
-					}
-					
-					if(neighbors[i] > otherNeighbors[j]) {
-						while(j < otherNeighbors.length && neighbors[i] != otherNeighbors[j]) {
+
+					if(i < neighbors.length)
+						while (j < otherNeighbors.length && neighbors[i] > otherNeighbors[j]) {
 							union++;
 							j++;
 						}
-					}
-					
-					if(i == neighbors.length || j == otherNeighbors.length)
-						break;
 				}
-				
-				if(i < neighbors.length)
+
+				if (i < neighbors.length)
 					union += neighbors.length - i;
-				if(j < otherNeighbors.length)
+				if (j < otherNeighbors.length)
 					union += otherNeighbors.length - j;
-				
+				System.out.println((double) intersection / union);
 				return (double) intersection / union;
 			}
 		}

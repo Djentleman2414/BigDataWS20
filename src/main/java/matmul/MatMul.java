@@ -6,144 +6,31 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.WritableComparable;
-import org.apache.hadoop.io.WritableComparator;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.Partitioner;
-import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.MultipleInputs;
+import org.apache.hadoop.mapreduce.lib.input.SequenceFileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-import types.IntDoubleWritable;
+import matmul.FirstPhase.LeftMatrixMapper;
+import matmul.FirstPhase.MapKeyClass;
+import matmul.FirstPhase.MatMulReducer;
+import matmul.FirstPhase.MatrixEntry;
+import matmul.FirstPhase.MatrixGroupingComparator;
+import matmul.FirstPhase.MatrixPartitioner;
+import matmul.FirstPhase.MatrixSortingComparator;
+import matmul.FirstPhase.RightMatrixMapper;
+import matmul.SecondPhase.IdentityMapper;
+import matmul.SecondPhase.MatrixEntryReducer;
 import types.IntPairWritable;
-import types.IntTrippleWritable;
 
 public class MatMul extends Configured implements Tool {
-
-	protected static int leftRowCount = 0;
-	protected static int rightColumnCount = 0;
-
-	public static abstract class MatrixMapper extends Mapper<Object, Text, IntTrippleWritable, IntDoubleWritable> {
-		protected IntTrippleWritable outKey = new IntTrippleWritable();
-		protected IntDoubleWritable outValue = new IntDoubleWritable();
-
-		protected int rowCount;
-		protected int colCount;
-
-		public void setup(Context context) throws IOException {
-			Configuration conf = context.getConfiguration();
-
-			rowCount = conf.getInt("ROWCOUNT", 0);
-			colCount = conf.getInt("COLCOUNT", 0);
-		}
-
-		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-			String[] args = value.toString().split("\t");
-			int rowIndex = Integer.parseInt(args[0]);
-			int colIndex = Integer.parseInt(args[1]);
-			double val = Double.parseDouble(args[2]);
-			if (val != 0) {
-				outValue.setDouble(val);
-				writeToContext(rowIndex, colIndex, context);
-			}
-		}
-
-		protected abstract void writeToContext(int rowIndex, int colIndex, Context context)
-				throws IOException, InterruptedException;
-	}
-
-	public static class LeftMapper extends MatrixMapper {
-
-		@Override
-		protected void writeToContext(int rowIndex, int colIndex, Context context)
-				throws IOException, InterruptedException {
-			outKey.set(rowIndex, 0, colIndex);
-			outValue.setInt(colIndex);
-			for (int i = 0; i < colCount; i++) {
-				outKey.setY(i);
-				context.write(outKey, outValue);
-			}
-		}
-
-	}
-
-	public static class RightMapper extends MatrixMapper {
-
-		@Override
-		protected void writeToContext(int rowIndex, int colIndex, Context context)
-				throws IOException, InterruptedException {
-			outKey.set(0, colIndex, rowIndex);
-			outValue.setInt(rowIndex);
-			for (int i = 0; i < rowCount; i++) {
-				outKey.setX(i);
-				context.write(outKey, outValue);
-			}
-		}
-	}
-
-	public static class MatMulReducer
-			extends Reducer<IntTrippleWritable, IntDoubleWritable, IntPairWritable, DoubleWritable> {
-		private IntPairWritable outKey = new IntPairWritable();
-		private DoubleWritable outValue = new DoubleWritable();
-
-		public void reduce(IntTrippleWritable key, Iterable<IntDoubleWritable> values, Context context)
-				throws IOException, InterruptedException {
-			
-			double temp = 0;
-			double sum = 0;
-			boolean toggle = true;
-			int lastPos = 0;
-			for (IntDoubleWritable value : values) {
-				if (toggle || lastPos != value.getInt()) { // (L,0,1),(R,0,2),(L,1,2),(L,2,4),(R,2,2)  -> überspringen (R,1,...)
-					temp = value.getDouble();
-					lastPos = value.getInt();
-					toggle = false;
-				} else {
-					sum += temp * value.getDouble();
-					temp = 0;
-					toggle = true;
-				}
-			}
-			outKey.set(key.getX(), key.getY());
-			outValue.set(sum);
-			context.write(outKey, outValue);
-		}
-	}
 	
-	
-	public static class MatMulPartitioner extends Partitioner<IntTrippleWritable, IntDoubleWritable> {
-
-		@Override
-		public int getPartition(IntTrippleWritable key, IntDoubleWritable value, int numPartitions) {
-			final int prime = 31;
-			int hashValue = prime * (key.getX() + key.getY());
-			return hashValue % numPartitions;
-		}
-		
-	}
-	
-	
-	public static class MatMulGroupingComparator extends WritableComparator {
-		
-		public MatMulGroupingComparator() {
-			super(IntTrippleWritable.class, true);
-		}
-		
-		public int compare(WritableComparable a, WritableComparable b) {
-			IntTrippleWritable left = (IntTrippleWritable) a;
-			IntTrippleWritable right = (IntTrippleWritable) b;
-			int dist = Integer.compare(left.getX(), right.getX());
-			if (dist != 0)
-				return dist;
-			
-			return Integer.compare(left.getY(), right.getY());
-		}
-	}
+	public static final int MAX_BUCKET_SIZE = 2000000;
 
 	public static void main(String[] args) throws Exception {
 		int exitcode = ToolRunner.run(new MatMul(), args);
@@ -153,51 +40,83 @@ public class MatMul extends Configured implements Tool {
 	@Override
 	public int run(String[] args) throws Exception {
 		// arguments: folder matrix0 matrix1 outputFolder
-		if (args.length != 4) {
-			System.err.printf("Usage: %s [generic options] <folder> <input1> <input2> <output>\n", getClass().getSimpleName());
+		if (args.length != 3) {
+			System.err.printf("Usage: %s [generic options] <input1> <input2> <output>\n", getClass().getSimpleName());
 			ToolRunner.printGenericCommandUsage(System.err);
 			return -1;
 		}
-
-		Configuration conf = getConf();
-
-		getMatrixDimensions(conf, args[1], args[2]);
 		
-		Job job = getJob(conf, args[0], args[1], args[2], args[3]);
+		Configuration conf = getConf();
+		
+		conf.setInt("MAX_BUCKET_SIZE", MAX_BUCKET_SIZE);
+
+		getMatrixDimensions(conf, args[0]);
+		
+		Job job = getFirstJob(conf, args[0], args[1], args[2]);
+		
+		if(!job.waitForCompletion(true))
+			return -1;
+		
+		job = getSecondJob(conf, args[2]);
+		
 		return job.waitForCompletion(true) ? 0 : -1;
 	}
 
-	public void getMatrixDimensions(Configuration conf, String input0, String input1) {
-		String[] input0Array = input0.split("\\.")[0].split("-");
-		String[] input1Array = input1.split("\\.")[0].split("-");
-		conf.setInt("ROWCOUNT", Integer.parseInt(input0Array[1]));
-		conf.setInt("COLCOUNT", Integer.parseInt(input1Array[2]));
+	public void getMatrixDimensions(Configuration conf, String input0) {
+		String[] inputArray = input0.split("\\.")[0].split("-");
+		int rows = Integer.parseInt(inputArray[inputArray.length - 2]);
+		int columns = Integer.parseInt(inputArray[inputArray.length - 1]);
+		conf.setInt("NUM_OF_BUCKETS", ((rows * columns) / MAX_BUCKET_SIZE) + 1);
+		conf.setInt("NUM_OF_COLUMNS", columns);
 	}
 
-	public Job getJob(Configuration conf, String inputFolder, String matrix0, String matrix1, String outputFolder)
+	public Job getFirstJob(Configuration conf, String matrix0, String matrix1, String outputFolder)
 			throws IOException {
 		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
-		if (!inputFolder.endsWith("/"))
-			inputFolder += "/";
 		if (!outputFolder.endsWith("/"))
 			outputFolder += "/";
-		MultipleInputs.addInputPath(job, new Path(inputFolder + matrix0), TextInputFormat.class, LeftMapper.class);
-		MultipleInputs.addInputPath(job, new Path(inputFolder + matrix1), TextInputFormat.class, RightMapper.class);
-		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "result"));
+		MultipleInputs.addInputPath(job, new Path(matrix0), TextInputFormat.class, LeftMatrixMapper.class);
+		MultipleInputs.addInputPath(job, new Path(matrix1), TextInputFormat.class, RightMatrixMapper.class);
+		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "tmp"));
 
 		job.setJarByClass(MatMul.class);
 		job.setReducerClass(MatMulReducer.class);
 
-		job.setMapOutputKeyClass(IntTrippleWritable.class);
-		job.setMapOutputValueClass(IntDoubleWritable.class);
+		job.setMapOutputKeyClass(MapKeyClass.class);
+		job.setMapOutputValueClass(MatrixEntry.class);
 		job.setOutputKeyClass(IntPairWritable.class);
 		job.setOutputValueClass(DoubleWritable.class);
+		job.setOutputFormatClass(SequenceFileOutputFormat.class);
 		
-		job.setPartitionerClass(MatMulPartitioner.class);
-		job.setGroupingComparatorClass(MatMulGroupingComparator.class);
+		job.setPartitionerClass(MatrixPartitioner.class);
+		job.setGroupingComparatorClass(MatrixGroupingComparator.class);
+		job.setSortComparatorClass(MatrixSortingComparator.class);
 
 		job.setNumReduceTasks(10);
 
+		return job;
+	}
+	
+	public Job getSecondJob(Configuration conf, String outputFolder) throws IOException {
+		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
+		if (!outputFolder.endsWith("/"))
+			outputFolder += "/";
+		
+		FileInputFormat.addInputPath(job, new Path(outputFolder + "tmp"));
+		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "result"));
+		
+		job.setJarByClass(MatMul.class);
+		//job.setMapperClass(IdentityMapper.class);
+		job.setCombinerClass(MatrixEntryReducer.class);
+		job.setReducerClass(MatrixEntryReducer.class);
+		
+		job.setInputFormatClass(SequenceFileInputFormat.class);
+		
+		job.setOutputKeyClass(IntPairWritable.class);
+		job.setOutputValueClass(DoubleWritable.class);
+		
+		job.setNumReduceTasks(10);
+		
 		return job;
 	}
 }

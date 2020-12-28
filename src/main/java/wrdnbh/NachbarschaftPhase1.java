@@ -5,7 +5,6 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Arrays;
 
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableComparable;
@@ -13,17 +12,25 @@ import org.apache.hadoop.io.WritableComparator;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 
-import types.IntPairWritable;
+import types.TextIntWritable;
 
 public class NachbarschaftPhase1 {
 
 	public static class NeighborCounter implements Writable {
 
-		public static int minCount = 10;
+		public static int minCount = 10; // h aus der Aufgabe
 
 		private int wordHash;
 		private byte count;
-		
+
+		public NeighborCounter() {
+		}
+
+		public NeighborCounter(int wordHash, byte count) {
+			this.wordHash = wordHash;
+			this.count = count;
+		}
+
 		public void set(int wordHash, byte count) {
 			this.wordHash = wordHash;
 			this.count = count;
@@ -35,6 +42,7 @@ public class NachbarschaftPhase1 {
 
 		public void setWordHash(int wordHash) {
 			this.wordHash = wordHash;
+			count = 1;
 		}
 
 		public byte getCount() {
@@ -96,6 +104,7 @@ public class NachbarschaftPhase1 {
 			return true;
 		}
 
+		@Override
 		public String toString() {
 			StringBuilder sb = new StringBuilder();
 
@@ -105,65 +114,83 @@ public class NachbarschaftPhase1 {
 			return sb.toString();
 		}
 
+		public NeighborCounter clone() {
+			return new NeighborCounter(wordHash, count);
+		}
+
 	}
-	
-	
+
 	public static class OutArrayWritable implements Writable {
 
-		int[] hashes = new int[100000];
+		int[] hashes;
 		int entryCount = 0;
-		
+
+		public OutArrayWritable() {
+			hashes = new int[100000];
+		}
+
+		public OutArrayWritable(int[] hashes, int entryCount) {
+			this.hashes = hashes;
+			this.entryCount = entryCount;
+		}
+
 		public int size() {
 			return hashes.length;
 		}
-		
+
 		public int getEntryCount() {
 			return entryCount;
 		}
-		
+
 		public boolean hasSpace() {
 			return hashes.length > entryCount;
 		}
-		
+
 		public void expandSpace() {
 			int[] newHashes = new int[hashes.length + 1000];
 			System.arraycopy(hashes, 0, newHashes, 0, entryCount);
 		}
-		
+
 		public void add(int i) {
 			hashes[entryCount++] = i;
 		}
-		
+
 		public int get(int i) {
 			return hashes[i];
 		}
-		
+
+		public void reset() {
+			entryCount = 0;
+		}
+
 		@Override
 		public void write(DataOutput out) throws IOException {
 			out.writeInt(entryCount);
-			for(int i = 0; i < entryCount; i++)
+			for (int i = 0; i < entryCount; i++)
 				out.writeInt(hashes[i]);
 		}
 
 		@Override
 		public void readFields(DataInput in) throws IOException {
 			entryCount = in.readInt();
-			hashes = new int[Math.max(100000, entryCount)];
-			for(int i = 0; i < entryCount; i++)
+			if (entryCount >= hashes.length)
+				hashes = new int[entryCount];
+			for (int i = 0; i < entryCount; i++)
 				hashes[i] = in.readInt();
 		}
-		
+
 		public String toString() {
 			StringBuilder sb = new StringBuilder();
-			
-			for(int i = 0; i < entryCount - 1; i++)
+
+			for (int i = 0; i < entryCount - 1; i++)
 				sb.append(hashes[i]).append('\t');
-			
-			sb.append(hashes[entryCount - 1]);
-			
+
+			if (entryCount > 0)
+				sb.append(hashes[entryCount - 1]);
+
 			return sb.toString();
 		}
-		
+
 		@Override
 		public int hashCode() {
 			final int prime = 31;
@@ -184,118 +211,134 @@ public class NachbarschaftPhase1 {
 			OutArrayWritable other = (OutArrayWritable) obj;
 			if (entryCount != other.entryCount)
 				return false;
-			if (!Arrays.equals(hashes, other.hashes))
-				return false;
+			for (int i = 0; i < entryCount; i++)
+				if (hashes[i] != other.hashes[i])
+					return false;
+
 			return true;
 		}
-		
+
+		public OutArrayWritable clone() {
+			int[] cloneHashes = new int[entryCount];
+			System.arraycopy(hashes, 0, cloneHashes, 0, entryCount);
+			return new OutArrayWritable(cloneHashes, entryCount);
+		}
+
 	}
 
-	public static class SentenceMapper extends Mapper<Object, Text, IntPairWritable, NeighborCounter> {
-		
-		public static int maxDistance = 3;
+	public static class SentenceMapper extends Mapper<Object, Text, TextIntWritable, NeighborCounter> {
 
-		private IntPairWritable outKey = new IntPairWritable();
+		public static int maxDistance;
+
+		private TextIntWritable outKey = new TextIntWritable();
 		private NeighborCounter outValue = new NeighborCounter();
-		
+
 		public void setup(Context context) {
-			maxDistance = context.getConfiguration().getInt("MAXDISTANCE", 3);
-			NeighborCounter.setMinCount(context.getConfiguration().getInt("MINCOUNT", 10));
+			maxDistance = context.getConfiguration().getInt("MAX_DISTANCE", 3);
 		}
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String[] words = cleanLine(value.toString()).split(" ");
-			
+
 			outValue.setCount((byte) 1);
-			
-			for(int i = 0; i < words.length; i++) {
-				outKey.setX(words[i].hashCode());
-				for(int j = Math.max(0, i - maxDistance); j < Math.min(words.length, i + maxDistance); j++) {
-					if(j != i) {
-						outKey.setY(words[j].hashCode());
+
+			for (int i = 0; i < words.length; i++) {
+				if (words[i] == "")
+					continue;
+				outKey.setText(words[i]);
+				for (int j = Math.max(0, i - maxDistance); j < Math.min(words.length, i + maxDistance + 1); j++) {
+					if (j != i) {
+						outKey.setInt(words[j].hashCode());
 						outValue.setWordHash(words[j].hashCode());
 						context.write(outKey, outValue);
 					}
 				}
-			}			
+			}
 		}
 
 		public String cleanLine(String line) {
 			return line.replaceAll("[^a-zA-Z ]", "").toLowerCase();
 		}
 	}
-	
-	public static class NeighborCountCombiner extends Reducer<IntPairWritable, NeighborCounter, IntPairWritable, NeighborCounter> {
-		
-		private IntPairWritable outKey = new IntPairWritable();
+
+	public static class NeighborCountCombiner
+			extends Reducer<TextIntWritable, NeighborCounter, TextIntWritable, NeighborCounter> {
+
 		private NeighborCounter outValue = new NeighborCounter();
-		
-		public void reduce(IntPairWritable key, Iterable<NeighborCounter> values, Context context) throws IOException, InterruptedException {
-			for(NeighborCounter value : values) {
-				outKey.set(key.getX(), value.getWordHash());
-				outValue.set(value.getWordHash(), value.getCount());
-				break;
-			}
+
+		public void setup(Context context) {
+			NeighborCounter.setMinCount(context.getConfiguration().getInt("MINCOUNT", 10));
+		}
+
+		public void reduce(TextIntWritable key, Iterable<NeighborCounter> values, Context context)
+				throws IOException, InterruptedException {
 			
-			for(NeighborCounter value : values) {
-				if(outValue.getWordHash() != value.getWordHash()) {
-					context.write(outKey, outValue);
-					outKey.setY(value.getWordHash());
-					outValue.set(value.getWordHash(), value.getCount());
-					continue;
-				}
+			outValue.set(key.getInt(), (byte) 0);
+			for (NeighborCounter value : values) {
 				outValue.add(value.getCount());
 			}
-			context.write(outKey, outValue);
-		}	
+			context.write(key, outValue);
+		}
 	}
-	
-	public static class NeighborCountReducer extends Reducer<IntPairWritable, NeighborCounter, IntWritable, OutArrayWritable> {
-		
-		private IntWritable outKey = new IntWritable();
+
+	public static class NeighborCountReducer extends Reducer<TextIntWritable, NeighborCounter, Text, OutArrayWritable> {
+
+		private Text outKey = new Text();
 		private OutArrayWritable outValue = new OutArrayWritable();
-		
-		public void reduce(IntPairWritable key, Iterable<NeighborCounter> values, Context context) throws IOException, InterruptedException {
+
+		public void setup(Context context) {
+			NeighborCounter.setMinCount(context.getConfiguration().getInt("MIN_COUNT", 10));
+		}
+
+		public void reduce(TextIntWritable key, Iterable<NeighborCounter> values, Context context)
+				throws IOException, InterruptedException {
 			int currentHash = 0;
 			int count = 0;
-			
-			for(NeighborCounter value : values) {
+
+			outKey.set(key.getText());
+
+			// initialise
+			for (NeighborCounter value : values) {
 				currentHash = value.getWordHash();
-				count = value.getCount();
+				count = value.getCount();				
 				break;
 			}
-			
-			for(NeighborCounter value : values) {
-				if(currentHash != value.getWordHash()) {
-					if(count >= NeighborCounter.minCount) {
-						if(!outValue.hasSpace())
+
+			for (NeighborCounter value : values) {			
+				if (currentHash != value.getWordHash()) {
+					if (count >= NeighborCounter.minCount) {
+						if (!outValue.hasSpace())
 							outValue.expandSpace();
 						outValue.add(currentHash);
-					}					
+					}
 					currentHash = value.getWordHash();
 					count = value.getCount();
 					continue;
 				}
 				count += value.getCount();
 			}
-			if(count >= NeighborCounter.minCount) {
-				if(!outValue.hasSpace())
+			if (count >= NeighborCounter.minCount) {
+				if (!outValue.hasSpace())
 					outValue.expandSpace();
 				outValue.add(currentHash);
 			}
-			context.write(outKey, outValue);
-		}	
-	}
-	
-	public static class WordGroupingComparator extends WritableComparator {
-		
-		public WordGroupingComparator() {
-			super(IntPairWritable.class);
+			if(outValue.getEntryCount() > 0)
+				context.write(outKey, outValue);
+			outValue.reset();
 		}
-		
+	}
+
+	public static class WordGroupingComparator extends WritableComparator {
+
+		public WordGroupingComparator() {
+			super(TextIntWritable.class, true);
+		}
+
 		@SuppressWarnings("rawtypes")
 		public int compare(WritableComparable a, WritableComparable b) {
-			return Integer.compare(((IntPairWritable) a).getX(), ((IntPairWritable) b).getX());
+			TextIntWritable left = (TextIntWritable) a;
+			TextIntWritable right = (TextIntWritable) b;
+			return left.getText().compareTo(right.getText());
 		}
 	}
 

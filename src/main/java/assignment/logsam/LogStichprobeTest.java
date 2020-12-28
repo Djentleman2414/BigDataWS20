@@ -1,7 +1,6 @@
 package assignment.logsam;
 
 import java.io.IOException;
-import java.nio.file.Paths;
 import java.util.Arrays;
 
 import org.apache.hadoop.io.DoubleWritable;
@@ -10,21 +9,13 @@ import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mrunit.mapreduce.MapDriver;
 import org.apache.hadoop.mrunit.mapreduce.MapReduceDriver;
-import org.apache.hadoop.mrunit.mapreduce.MultipleInputsMapReduceDriver;
 import org.apache.hadoop.mrunit.mapreduce.ReduceDriver;
 import org.apache.hadoop.mrunit.types.Pair;
 import org.junit.Before;
 import org.junit.Test;
 
-import matmul.MatMul.LeftMapper;
-import matmul.MatMul.MatMulGroupingComparator;
-import matmul.MatMul.MatMulReducer;
-import matmul.MatMul.RightMapper;
 import assignment.logsam.LogStichprobe.*;
-import types.DoublePairWritable;
 import types.IntDoubleWritable;
-import types.IntPairWritable;
-import types.IntTrippleWritable;
 import types.LongPairWritable;
 
 public class LogStichprobeTest {
