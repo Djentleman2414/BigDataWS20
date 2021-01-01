@@ -200,10 +200,6 @@ public class FirstPhase {
 			outKey.setColumn(colIndex);
 			outValue.setCoordinates(rowIndex, colIndex);
 			context.write(outKey, outValue);
-//			if (!(wroteToContextLeft > 10)) {
-//				System.out.println("ABCD LeftMapper: " + outKey.toString() + " " + outValue.toString());
-//				wroteToContextLeft++;
-//			}
 		}
 	}
 
@@ -218,10 +214,6 @@ public class FirstPhase {
 			for (int i = 0; i < numOfBuckets; i++) {
 				outKey.setBucket(i);
 				context.write(outKey, outValue);
-//				if (!(wroteToContextRight > 10)) {
-//					System.out.println("ABCD RightMapper: " + outKey.toString() + " " + outValue.toString());
-//					wroteToContextRight++;
-//				}
 			}
 		}
 	}
@@ -287,9 +279,6 @@ public class FirstPhase {
 			Configuration conf = context.getConfiguration();
 			int maxBucketSize = conf.getInt("MAX_BUCKET_SIZE", 0);
 			leftMatrixEntries = new MatrixEntry[maxBucketSize];
-			for (int i = 0; i < maxBucketSize; i++) {
-				leftMatrixEntries[i] = new MatrixEntry();
-			}
 		}
 
 		public void reduce(MapKeyClass key, Iterable<MatrixEntry> values, Context context)
@@ -304,6 +293,8 @@ public class FirstPhase {
 					findPairs(value.getRow(), value.getColumn(), value.getValue(), context);
 					break;
 				}
+				if(leftMatrixEntries[numOfEntries] == null)
+					leftMatrixEntries[numOfEntries] = new MatrixEntry();
 				leftMatrixEntries[numOfEntries++].set(value.getRow(), value.getColumn(), value.getValue());
 			}
 			

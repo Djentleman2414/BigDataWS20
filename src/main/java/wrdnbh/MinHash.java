@@ -40,7 +40,7 @@ public class MinHash {
 	}
 	
 	private int h(int value, int index) {
-		return (int) (hashCoefs[index][0] * (long) value + hashCoefs[index][1]);
+		return (int) (hashCoefs[index][0] * (long) value + hashCoefs[index][1]) %LARGE_PRIME;
 	}
 	
 	public void reset() {
