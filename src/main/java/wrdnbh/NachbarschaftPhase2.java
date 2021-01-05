@@ -4,6 +4,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Random;
 
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
@@ -19,11 +20,11 @@ public class NachbarschaftPhase2 {
 		private String word;
 		private int[] neighbors;
 		private int entryCount;
-		
+
 		public BucketMapValue() {
 			neighbors = new int[10000];
 		}
-		
+
 		public BucketMapValue(String word, int[] neighbors, int entryCount) {
 			this.word = word;
 			this.neighbors = neighbors;
@@ -99,7 +100,7 @@ public class NachbarschaftPhase2 {
 			if (entryCount != other.entryCount)
 				return false;
 			for (int i = 0; i < entryCount; i++)
-				if(neighbors[i] != other.neighbors[i])
+				if (neighbors[i] != other.neighbors[i])
 					return false;
 			if (word == null) {
 				if (other.word != null)
@@ -116,12 +117,12 @@ public class NachbarschaftPhase2 {
 			sb.append("Neighbors: ");
 			for (int i = 0; i < entryCount - 1; i++)
 				sb.append(neighbors[i]).append(' ');
-			if(entryCount > 0)
+			if (entryCount > 0)
 				sb.append(neighbors[entryCount - 1]);
 
 			return sb.toString();
 		}
-		
+
 		public BucketMapValue clone() {
 			int[] cloneNeighbors = new int[entryCount];
 			System.arraycopy(neighbors, 0, cloneNeighbors, 0, entryCount);
@@ -132,20 +133,23 @@ public class NachbarschaftPhase2 {
 
 	public static class MinHashMapper extends Mapper<Object, Text, IntWritable, BucketMapValue> {
 
-		public static int SMALL_PRIME = 31;
+		public static int SMALL_PRIME = 103;
 
 		private MinHash mh;
 		private int[] buckets;
 		private IntWritable outKey = new IntWritable();
 		private BucketMapValue outValue = new BucketMapValue();
 
-		private int numOfHashes;
+		private int numOfHashesPerBand;
 		private int numOfBands;
+		
+		private int seed;
+		private Random r = new Random();
 
 		public void setup(Context context) {
-			numOfHashes = context.getConfiguration().getInt("NUM_OF_HASHES", 1);
-			numOfBands = context.getConfiguration().getInt("NUM_OF_BANDS", 1);
-			mh = new MinHash(numOfHashes, context.getConfiguration().getInt("SEED", 0));
+			numOfHashesPerBand = context.getConfiguration().getInt(Nachbarschaft.NUM_OF_HASHES_PER_BAND, 1);
+			numOfBands = context.getConfiguration().getInt(Nachbarschaft.NUM_OF_BANDS, 1);
+			mh = new MinHash(numOfHashesPerBand * numOfBands, context.getConfiguration().getInt("SEED", 0));
 			buckets = new int[numOfBands];
 		}
 
@@ -159,7 +163,7 @@ public class NachbarschaftPhase2 {
 				mh.updateSignature(hash);
 			}
 			setBuckets(mh.getSignature());
-			
+
 			for (int bucket : buckets) {
 				outKey.set(bucket);
 				context.write(outKey, outValue);
@@ -169,14 +173,14 @@ public class NachbarschaftPhase2 {
 		}
 
 		private void setBuckets(int[] signature) {
-			int hashesPerBand = signature.length / buckets.length;
-
-			for (int i = 0; i < buckets.length; i++) {
+			r.setSeed(seed);
+			for (int band = 0; band < buckets.length; band++) {
 				int bucketHash = 1;
-				for (int j = 0; j < hashesPerBand && i * hashesPerBand + j < signature.length; j++) {
-					bucketHash = SMALL_PRIME * bucketHash + signature[i * hashesPerBand + j];
+				int hashNumber = r.nextInt(SMALL_PRIME - 1) + 1; 
+				for (int j = 0; j < numOfHashesPerBand; j++) {
+					bucketHash = hashNumber * bucketHash + signature[band * numOfHashesPerBand + j];
 				}
-				buckets[i] = bucketHash & Integer.MAX_VALUE; // make hashes positive again :D
+				buckets[band] = bucketHash & Integer.MAX_VALUE; // make hashes positive again :D
 			}
 		}
 	}
@@ -188,11 +192,11 @@ public class NachbarschaftPhase2 {
 		private Text outKey = new Text();
 		private Text outValue = new Text();
 
-		private NeighborSet[] neighborSets = new NeighborSet[1000];
+		private NeighborSet[] neighborSets = new NeighborSet[10000];
 		private int entryCount;
 
 		public void setup(Context context) {
-			minJaccard = context.getConfiguration().getDouble("MIN_JACCARD", 0.5);
+			minJaccard = context.getConfiguration().getDouble(Nachbarschaft.MIN_JACCARD_INDEX, 0.5);
 		}
 
 		public void reduce(IntWritable key, Iterable<BucketMapValue> values, Context context)
@@ -200,8 +204,12 @@ public class NachbarschaftPhase2 {
 			for (BucketMapValue value : values) {
 				if (entryCount == neighborSets.length)
 					expandNeighborSetArray();
-				neighborSets[entryCount++] = new NeighborSet(value.getWord(), value.getEntryCount(),
-						value.getNeighbors());
+				if (neighborSets[entryCount] == null)
+					neighborSets[entryCount] = new NeighborSet(value.getWord(), value.getEntryCount(),
+							value.getNeighbors());
+				else
+					neighborSets[entryCount].set(value.getWord(), value.getEntryCount(), value.getNeighbors());
+				entryCount++;
 			}
 
 			// word1, word2, word3, ...
@@ -209,7 +217,8 @@ public class NachbarschaftPhase2 {
 				outKey.set(neighborSets[i].getWord());
 
 				for (int j = i + 1; j < entryCount; j++) {
-					if (neighborSets[i].jaccard(neighborSets[j]) >= minJaccard) {
+					double jaccard = neighborSets[i].jaccard(neighborSets[j]);
+					if (jaccard >= minJaccard) {
 						outValue.set(neighborSets[j].getWord());
 						context.write(outKey, outValue);
 					}
@@ -243,6 +252,13 @@ public class NachbarschaftPhase2 {
 				this.word = word;
 			}
 
+			public void set(String word, int entryCount, int[] neighbors) {
+				this.word = word;
+				if (this.neighbors.length < entryCount)
+					this.neighbors = new int[entryCount];
+				System.arraycopy(neighbors, 0, this.neighbors, 0, entryCount);
+			}
+
 			public double jaccard(NeighborSet other) {
 				if (other == null)
 					return 0;
@@ -266,13 +282,13 @@ public class NachbarschaftPhase2 {
 						i++;
 						j++;
 					}
-					if(j < otherNeighbors.length)
+					if (j < otherNeighbors.length)
 						while (i < neighbors.length && neighbors[i] < otherNeighbors[j]) {
 							union++;
 							i++;
 						}
 
-					if(i < neighbors.length)
+					if (i < neighbors.length)
 						while (j < otherNeighbors.length && neighbors[i] > otherNeighbors[j]) {
 							union++;
 							j++;

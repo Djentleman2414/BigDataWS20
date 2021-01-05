@@ -14,6 +14,7 @@ import org.apache.hadoop.mrunit.types.Pair;
 import org.junit.Before;
 import org.junit.Test;
 
+import crkhsh.AlphabetGenerator.CharWritable;
 import crkhsh.CrackHash.CrackHashReducer;
 import crkhsh.CrackHash.HintReducer;
 import crkhsh.CrackHash.IdentityMapper;
@@ -25,7 +26,7 @@ import crkhsh.CrackHash.HintCombiner;
 
 public class CrackHashTest {
 	
-	MapDriver<LongWritable, Text, Text, MapValue> mapDriver1_1;
+	MapDriver<LongWritable, CharWritable, Text, MapValue> mapDriver1_1;
 	MapDriver<LongWritable, Text, Text, MapValue> mapDriver1_2;
 	MapDriver<LongWritable, Text, IntWritable, SecondMapValue> mapDriver2;
 	ReduceDriver<Text,MapValue,IntWritable,Text> reduceDriver1;
@@ -64,9 +65,9 @@ public class CrackHashTest {
 		String[] permutations = {"BC", "CB", "AC", "CA", "AB", "BA"};
 		
 		for(int i = 0; i < alphabet.length; i++) {
-			mapDriver1_1.addInput(new Pair<>(key, new Text("" + alphabet[i])));
+			mapDriver1_1.addInput(new Pair<>(key, new CharWritable(alphabet[i])));
 		}
-		mapDriver1_1.addInput(new Pair<>(key, new Text("" + 'D'))); // Input that should be ignored
+		mapDriver1_1.addInput(new Pair<>(key, new CharWritable('D'))); // Input that should be ignored
 
 		for(int i = 0; i < permutations.length; i++) {
 			mapDriver1_1.addOutput(new Text(CrackHash.customHash(permutations[i])), new MapValue(alphabet[i/2]));
@@ -135,11 +136,11 @@ public class CrackHashTest {
 		mapReduceDriver1.getConfiguration().setInt("ALPHABETSIZE", 4);
 		
 		mapReduceDriver1.withMapper(mapper1_1);
-		mapReduceDriver1.withInput(mapper1_1, inputKey, new Text("A"));
-		mapReduceDriver1.withInput(mapper1_1, inputKey, new Text("B"));
-		mapReduceDriver1.withInput(mapper1_1, inputKey, new Text("C"));
-		mapReduceDriver1.withInput(mapper1_1, inputKey, new Text("D"));
-		mapReduceDriver1.withInput(mapper1_1, inputKey, new Text("E"));
+		mapReduceDriver1.withInput(mapper1_1, inputKey, new CharWritable('A'));
+		mapReduceDriver1.withInput(mapper1_1, inputKey, new CharWritable('B'));
+		mapReduceDriver1.withInput(mapper1_1, inputKey, new CharWritable('C'));
+		mapReduceDriver1.withInput(mapper1_1, inputKey, new CharWritable('D'));
+		mapReduceDriver1.withInput(mapper1_1, inputKey, new CharWritable('E'));
 		
 		mapReduceDriver1.withMapper(mapper1_2);
 		mapReduceDriver1.withInput(mapper1_2, inputKey, new Text("password1," + CrackHash.customHash("ABC") + "," + CrackHash.customHash("ABD") + ",1"));

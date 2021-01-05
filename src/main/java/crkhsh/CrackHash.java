@@ -26,9 +26,12 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
+import crkhsh.AlphabetGenerator.AlphabetInputFormat;
+import crkhsh.AlphabetGenerator.CharWritable;
+
 public class CrackHash extends Configured implements Tool {
 
-	
+	private static final String PASSWORDSIZE = "passwordsize";
 
 	public static class MapValue implements Writable {
 
@@ -39,6 +42,8 @@ public class CrackHash extends Configured implements Tool {
 		private int valueType;
 		private int id;
 		private char hint;
+		
+		
 
 		public MapValue() {
 		}
@@ -81,7 +86,6 @@ public class CrackHash extends Configured implements Tool {
 			else
 				out.writeChar(hint);
 
-				
 		}
 
 		@Override
@@ -90,17 +94,17 @@ public class CrackHash extends Configured implements Tool {
 			if (valueType < PERMUTATIONTYPE)
 				id = in.readInt();
 			else
-				hint = in.readChar();				
+				hint = in.readChar();
 		}
-		
+
 		public String toString() {
 			StringBuilder sb = new StringBuilder();
-			
-			if(valueType < PERMUTATIONTYPE)
+
+			if (valueType < PERMUTATIONTYPE)
 				sb.append("ID: ").append(id);
 			else
 				sb.append("HINT: ").append(hint);
-			
+
 			return sb.toString();
 		}
 
@@ -131,10 +135,10 @@ public class CrackHash extends Configured implements Tool {
 				return false;
 			return true;
 		}
-		
+
 		public MapValue clone() {
 			MapValue copy = new MapValue();
-			if(valueType < PERMUTATIONTYPE)
+			if (valueType < PERMUTATIONTYPE)
 				copy.setId(id, valueType);
 			else
 				copy.setHint(hint);
@@ -203,8 +207,8 @@ public class CrackHash extends Configured implements Tool {
 		@Override
 		public void write(DataOutput out) throws IOException {
 			out.writeBoolean(hashType);
-			if (hashType) 
-				out.write(hash.getBytes());		
+			if (hashType)
+				out.write(hash.getBytes());
 			else {
 				out.writeInt(hints.size());
 				for (char c : hints)
@@ -228,19 +232,19 @@ public class CrackHash extends Configured implements Tool {
 				}
 			}
 		}
-		
+
 		public String toString() {
 			StringBuilder sb = new StringBuilder();
-			
-			if(hashType)
+
+			if (hashType)
 				sb.append("Hash: ").append(hash);
 			else {
 				sb.append("Hints: ");
-				if(hints != null)
+				if (hints != null)
 					sb.append(hints.toString());
 				else
 					sb.append("[]");
-			}			
+			}
 			return sb.toString();
 		}
 
@@ -279,7 +283,7 @@ public class CrackHash extends Configured implements Tool {
 		}
 	}
 
-	public static class PermutationMapper extends Mapper<LongWritable, Text, Text, MapValue> {
+	public static class PermutationMapper extends Mapper<LongWritable, CharWritable, Text, MapValue> {
 
 		private int alphabetSize;
 		private char[] subset;
@@ -288,30 +292,29 @@ public class CrackHash extends Configured implements Tool {
 		private MapValue outValue = new MapValue();
 
 		public void setup(Context context) {
-			alphabetSize = context.getConfiguration().getInt("ALPHABETSIZE", 0);
+			alphabetSize = context.getConfiguration().getInt(AlphabetGenerator.ALPHABETSIZE, 0);
 			subset = new char[alphabetSize - 1];
 		}
 
-		public void map(LongWritable key, Text value, Context context)
+		public void map(LongWritable key, CharWritable value, Context context)
 				throws IOException, InterruptedException {
-			char c = (char) value.charAt(0);
-			if (c < 'A' + alphabetSize) {
-				int i = 0;
-				int j = 0;
-				while (i < alphabetSize) {
-					if (c != (char) (65 + i)) {
-						subset[j] = (char) ('A' + i);
-						j++;
-					}
-					i++;
+			char c = value.get();
+			System.out.println("ABCD " + c);
+			int i = 0;
+			int j = 0;
+			while (i < alphabetSize) {
+				if (c != (char) (65 + i)) {
+					subset[j] = (char) ('A' + i);
+					j++;
 				}
-				
-				outValue.setHint(c);
-				try {
-					generateAllPermutations(subset, subset.length, c, context);
-				} catch (NoSuchAlgorithmException e) {
-					throw new IOException(e);
-				}
+				i++;
+			}
+
+			outValue.setHint(c);
+			try {
+				generateAllPermutations(subset, subset.length, c, context);
+			} catch (NoSuchAlgorithmException e) {
+				throw new IOException(e);
 			}
 		}
 
@@ -409,7 +412,6 @@ public class CrackHash extends Configured implements Tool {
 				outValue.setHints(null);
 				outValue.addHint(splits[1].charAt(0));
 			}
-				
 
 			context.write(outKey, outValue);
 		}
@@ -449,11 +451,11 @@ public class CrackHash extends Configured implements Tool {
 		private Text outValue = new Text();
 
 		public void setup(Context context) {
-			int passwordSize = context.getConfiguration().getInt("PASSWORDSIZE", 0);
+			int passwordSize = context.getConfiguration().getInt(PASSWORDSIZE, 0);
 			password = new char[passwordSize];
 			toggles = new int[passwordSize];
 
-			alphabetSize = context.getConfiguration().getInt("ALPHABETSIZE", 0);
+			alphabetSize = context.getConfiguration().getInt(AlphabetGenerator.ALPHABETSIZE, 0);
 			charToggles = new boolean[alphabetSize];
 		}
 
@@ -554,13 +556,17 @@ public class CrackHash extends Configured implements Tool {
 
 	private Job getFirstJob(String[] args) throws IOException {
 		Job job = Job.getInstance(getConf(), getClass().getSimpleName() + "_firstJob");
-
+		Path in = new Path(args[0]);
+		Path empty = new Path("empty.txt");
 		if (!args[1].endsWith("/"))
 			args[1] += '/';
 
-		MultipleInputs.addInputPath(job, new Path(args[1] + "permutations"), TextInputFormat.class,
-				PermutationMapper.class);
-		MultipleInputs.addInputPath(job, new Path(args[0]), TextInputFormat.class, HashMapper.class);
+//		try(FileSystem fs = in.getFileSystem(getConf())) {
+//			fs.createNewFile(empty);
+//		}
+
+		MultipleInputs.addInputPath(job, empty, AlphabetInputFormat.class, PermutationMapper.class);
+		MultipleInputs.addInputPath(job, in, TextInputFormat.class, HashMapper.class);
 		FileOutputFormat.setOutputPath(job, new Path(args[1] + "temp"));
 
 		job.setJarByClass(CrackHash.class);
@@ -569,7 +575,7 @@ public class CrackHash extends Configured implements Tool {
 		job.setMapOutputValueClass(MapValue.class);
 		job.setOutputKeyClass(IntWritable.class);
 		job.setOutputValueClass(Text.class);
-		
+
 		job.setNumReduceTasks(10);
 
 		return job;
@@ -591,7 +597,7 @@ public class CrackHash extends Configured implements Tool {
 		job.setMapOutputValueClass(SecondMapValue.class);
 		job.setOutputKeyClass(IntWritable.class);
 		job.setOutputValueClass(Text.class);
-		
+
 		job.setNumReduceTasks(10);
 
 		return job;
@@ -603,8 +609,8 @@ public class CrackHash extends Configured implements Tool {
 
 	public void parseFilename(String filename) {
 		String[] splitFilename = filename.split("[-.]");
-		getConf().setInt("ALPHABETSIZE", splitFilename[1].charAt(0) - 64);
-		getConf().setInt("PASSWORDSIZE", Integer.parseInt(splitFilename[1].substring(1)));
+		getConf().setInt(AlphabetGenerator.ALPHABETSIZE, splitFilename[1].charAt(0) - 64);
+		getConf().setInt(PASSWORDSIZE, Integer.parseInt(splitFilename[1].substring(1)));
 	}
 
 }
