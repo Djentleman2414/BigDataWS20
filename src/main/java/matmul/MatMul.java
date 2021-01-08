@@ -29,8 +29,9 @@ import matmul.SecondPhase.MatrixEntryReducer;
 import types.IntPairWritable;
 
 public class MatMul extends Configured implements Tool {
-	
+
 	public static final int MAX_BUCKET_SIZE = 2000000;
+	public static final int MIN_BUCKET_SIZE = 20000;
 	public static final int MAX_REDUCE_TASKS = 10;
 
 	public static void main(String[] args) throws Exception {
@@ -45,31 +46,69 @@ public class MatMul extends Configured implements Tool {
 			ToolRunner.printGenericCommandUsage(System.err);
 			return -1;
 		}
-		
+
 		Configuration conf = getConf();
-		
-		conf.setInt("MAX_BUCKET_SIZE", MAX_BUCKET_SIZE);
 
 		int numOfBuckets = getMatrixDimensions(conf, args[0]);
-		
+
 		Job job = getFirstJob(conf, args[0], args[1], args[2], numOfBuckets);
-		
-		if(!job.waitForCompletion(true))
+
+		if (!job.waitForCompletion(true))
 			return -1;
-		
+
 		job = getSecondJob(conf, args[2]);
-		
+
 		return job.waitForCompletion(true) ? 0 : -1;
 	}
 
+	/**
+	 * Bei dieser Funktion werden drei Fälle unterschieden.
+	 * 
+	 * 
+	 * Fall 1: MIN_BUCKET_SIZE * MAX_REDUCE_TASKS < Anzahl Elemente
+	 * 
+	 * Die Bucketgröße entspricht MIN_BUCKET_SIZE, da kleinere Buckets den
+	 * Mehraufwand nicht wert wären. Es werden soviele Buckets mit der Größe
+	 * MIN_BUCKET_SIZE erstellt wie nötig. Die Anzahl Buckets entspricht in diesem
+	 * Fall der Anzahl der Reducer
+	 * 
+	 * Fall 2: Anzahl Elemente < MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
+	 * 
+	 * In diesem Fall sollen MAX_REDUCE_TASKS Reducer und Buckets erzeugt werden.
+	 * Die Bucketgröße entspricht Anzahl Elemente / MAX_REDUCE_TASKS
+	 * 
+	 * Fall 3: Anzahl Elemente > MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
+	 * 
+	 * In diesem Fall werden MAX_REDUCE_TASKS Reducer erstellt. Die Anzahl der
+	 * Buckets entspricht Anzahl Elemente / MAX_BUCKET_SIZE da größere Buckets nicht
+	 * lokal gehalten werden können.
+	 * 
+	 * 
+	 */
 	public int getMatrixDimensions(Configuration conf, String input0) {
 		String[] inputArray = input0.split("\\.")[0].split("-");
 		int rows = Integer.parseInt(inputArray[inputArray.length - 2]);
 		int columns = Integer.parseInt(inputArray[inputArray.length - 1]);
-		int numOfBuckets = ((rows * columns) / MAX_BUCKET_SIZE) + 1;
-		conf.setInt("NUM_OF_BUCKETS", numOfBuckets);
 		conf.setInt("NUM_OF_COLUMNS", columns);
-		
+
+		int numOfElements = rows * columns;
+		int numOfBuckets = 1;
+		int maxBucketSize = MAX_BUCKET_SIZE;
+
+		if (numOfElements < (MIN_BUCKET_SIZE * MAX_REDUCE_TASKS)) {
+			maxBucketSize = MIN_BUCKET_SIZE;
+			numOfBuckets = (int) Math.ceil((double) numOfElements / MIN_BUCKET_SIZE);
+		} else if (numOfElements < (MAX_BUCKET_SIZE * MAX_REDUCE_TASKS)) {
+			maxBucketSize = (int) Math.ceil((double) numOfElements / MAX_REDUCE_TASKS);
+			numOfBuckets = MAX_REDUCE_TASKS;
+		} else {
+			maxBucketSize = MAX_BUCKET_SIZE;
+			numOfBuckets = (int) Math.ceil((double) numOfElements / MAX_BUCKET_SIZE);
+		}
+
+		conf.setInt("MAX_BUCKET_SIZE", maxBucketSize);
+		conf.setInt("NUM_OF_BUCKETS", numOfBuckets);
+
 		return numOfBuckets;
 	}
 
@@ -90,7 +129,7 @@ public class MatMul extends Configured implements Tool {
 		job.setOutputKeyClass(IntPairWritable.class);
 		job.setOutputValueClass(DoubleWritable.class);
 		job.setOutputFormatClass(SequenceFileOutputFormat.class);
-		
+
 		job.setPartitionerClass(MatrixPartitioner.class);
 		job.setGroupingComparatorClass(MatrixGroupingComparator.class);
 		job.setSortComparatorClass(MatrixSortingComparator.class);
@@ -99,27 +138,27 @@ public class MatMul extends Configured implements Tool {
 
 		return job;
 	}
-	
+
 	public Job getSecondJob(Configuration conf, String outputFolder) throws IOException {
 		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
 		if (!outputFolder.endsWith("/"))
 			outputFolder += "/";
-		
+
 		FileInputFormat.addInputPath(job, new Path(outputFolder + "tmp"));
 		FileOutputFormat.setOutputPath(job, new Path(outputFolder + "result"));
-		
+
 		job.setJarByClass(MatMul.class);
 		job.setMapperClass(IdentityMapper.class);
 		job.setCombinerClass(MatrixEntryReducer.class);
 		job.setReducerClass(MatrixEntryReducer.class);
-		
+
 		job.setInputFormatClass(SequenceFileInputFormat.class);
-		
+
 		job.setOutputKeyClass(IntPairWritable.class);
 		job.setOutputValueClass(DoubleWritable.class);
-		
+
 		job.setNumReduceTasks(10);
-		
+
 		return job;
 	}
 }
