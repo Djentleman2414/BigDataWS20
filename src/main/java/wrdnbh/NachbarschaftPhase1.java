@@ -126,11 +126,11 @@ public class NachbarschaftPhase1 {
 
 		int[] hashes;
 		int entryCount = 0;
-		
+
 		private StringBuilder sb = new StringBuilder();
 
 		public OutArrayWritable() {
-			hashes = new int[100000];
+			hashes = new int[1000000];
 		}
 
 		public OutArrayWritable(int[] hashes, int entryCount) {
@@ -156,6 +156,8 @@ public class NachbarschaftPhase1 {
 		}
 
 		public void add(int i) {
+			if (hasSpace())
+				expandSpace();
 			hashes[entryCount++] = i;
 		}
 
@@ -231,8 +233,9 @@ public class NachbarschaftPhase1 {
 	}
 
 	public static class SentenceMapper extends Mapper<Object, Text, TextIntWritable, NeighborCounter> {
-		
-		public static final String[] commonWords = {"the", "a", "an", "is", "was", "and", "or", "to", "in", "of", "st", "nd", "rd", "th"};
+
+		public static final String[] commonWords = { "the", "a", "an", "is", "was", "and", "or", "to", "in", "of", "st",
+				"nd", "rd", "th" };
 		public final HashSet<String> commonWordSet = new HashSet<>();
 
 		public static int maxDistance;
@@ -240,31 +243,32 @@ public class NachbarschaftPhase1 {
 		private TextIntWritable outKey = new TextIntWritable();
 		private NeighborCounter outValue = new NeighborCounter();
 
+		private StringBuilder sb = new StringBuilder();
+		private String[] words = new String[50];
+		private int wordCount;
+
 		public void setup(Context context) {
 			maxDistance = context.getConfiguration().getInt(Nachbarschaft.MAX_DISTANCE, 3);
-			for(String word : commonWords)
+			for (String word : commonWords)
 				commonWordSet.add(word);
 		}
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-			String[] words = cleanLine(value.toString()).split(" ");
+			cleanLine(value.toString());
 
 			outValue.setCount((byte) 1);
 
-			for (int i = 0; i < words.length; i++) {
+			for (int i = 0; i < wordCount; i++) {
 				if (words[i].length() < 2 || commonWordSet.contains(words[i]))
 					continue;
 				outKey.setText(words[i]);
-				for (int j = Math.max(0, i - maxDistance); j < Math.min(words.length, i + maxDistance + 1); j++) {
+				for (int j = Math.max(0, i - maxDistance); j < Math.min(wordCount, i + maxDistance + 1); j++) {
 					if (j != i && !commonWordSet.contains(words[j])) {
 						int hash = words[j].hashCode();
 						// So sind alle Hashes zwischen 0..LARGE_PRIME und bilden eine Menge, in der
-						// jedes Element teilerfremd zu LARGE_PRIME ist. 
+						// jedes Element teilerfremd zu LARGE_PRIME ist.
 						// Das macht es einfacher Permutationen zu erzeugen
-						if (hash < 0)
-							hash *= -1;
-						if (hash > MinHash.LARGE_PRIME - 1)
-							hash %= MinHash.LARGE_PRIME;
+						hash = Math.floorMod(hash, MinHash.LARGE_PRIME);
 						outKey.setInt(hash);
 						outValue.setWordHash(hash);
 						context.write(outKey, outValue);
@@ -273,8 +277,27 @@ public class NachbarschaftPhase1 {
 			}
 		}
 
-		public String cleanLine(String line) {
-			return line.replaceAll("[^a-zA-Z ]", "").toLowerCase();
+		public void cleanLine(String line) {
+			int index = 0;
+			sb.setLength(0);
+
+			for (int i = 0; i < line.length(); i++) {
+				char ch = line.charAt(i);
+				if (ch == ' ') {
+					if (!(index < words.length)) {
+						String[] newWords = new String[words.length + 20];
+						System.arraycopy(words, 0, newWords, 0, words.length);
+						words = newWords;
+					}
+					words[index++] = sb.toString();
+					sb.setLength(0);
+				} else if (Character.getType(ch) == Character.LOWERCASE_LETTER) {
+					sb.append(ch);
+				} else if (Character.getType(ch) == Character.UPPERCASE_LETTER) {
+					sb.append((char) (ch + 32));
+				}
+			}
+			wordCount = index;
 		}
 	}
 
@@ -314,7 +337,7 @@ public class NachbarschaftPhase1 {
 
 			outKey.set(key.getText());
 
-			// initialise
+			// initialize
 			for (NeighborCounter value : values) {
 				currentHash = value.getWordHash();
 				count = value.getCount();
@@ -323,35 +346,49 @@ public class NachbarschaftPhase1 {
 
 			for (NeighborCounter value : values) {
 				if (currentHash != value.getWordHash()) {
-					if (count >= NeighborCounter.minCount) {
-						if (!outValue.hasSpace())
-							outValue.expandSpace();
+					if (count >= NeighborCounter.minCount)
 						outValue.add(currentHash);
-					}
 					currentHash = value.getWordHash();
 					count = value.getCount();
 					continue;
 				}
 				count += value.getCount();
 			}
-			if (count >= NeighborCounter.minCount) {
-				if (!outValue.hasSpace())
-					outValue.expandSpace();
+
+			if (count >= NeighborCounter.minCount)
 				outValue.add(currentHash);
-			}
+
 			if (outValue.getEntryCount() > 0)
 				context.write(outKey, outValue);
 			outValue.reset();
 		}
 	}
-	
+
 	public static class WordPartitioner extends Partitioner<TextIntWritable, NeighborCounter> {
 
 		@Override
 		public int getPartition(TextIntWritable key, NeighborCounter value, int numPartitions) {
 			return (key.getText().hashCode() & Integer.MAX_VALUE) % numPartitions;
 		}
-		
+
+	}
+
+	public static class CombinerGroupingComparator extends WritableComparator {
+
+		public CombinerGroupingComparator() {
+			super(TextIntWritable.class, true);
+		}
+
+		@SuppressWarnings("rawtypes")
+		public int compare(WritableComparable a, WritableComparable b) {
+			TextIntWritable left = (TextIntWritable) a;
+			TextIntWritable right = (TextIntWritable) b;
+			int dist = 0;
+			dist = left.getText().compareTo(right.getText());
+			if (dist != 0)
+				return dist;
+			return Integer.compare(left.getInt(), right.getInt());
+		}
 	}
 
 	public static class WordGroupingComparator extends WritableComparator {

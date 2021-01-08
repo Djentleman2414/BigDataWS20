@@ -142,7 +142,7 @@ public class NachbarschaftPhase2 {
 
 		private int numOfHashesPerBand;
 		private int numOfBands;
-		
+
 		private int seed;
 		private Random r = new Random();
 
@@ -176,11 +176,11 @@ public class NachbarschaftPhase2 {
 			r.setSeed(seed);
 			for (int band = 0; band < buckets.length; band++) {
 				int bucketHash = 1;
-				int hashNumber = r.nextInt(SMALL_PRIME - 1) + 1; 
+				int hashNumber = r.nextInt(SMALL_PRIME - 1) + 1;
 				for (int j = 0; j < numOfHashesPerBand; j++) {
 					bucketHash = hashNumber * bucketHash + signature[band * numOfHashesPerBand + j];
 				}
-				buckets[band] = bucketHash & Integer.MAX_VALUE; // make hashes positive again :D
+				buckets[band] = bucketHash;
 			}
 		}
 	}
@@ -299,7 +299,6 @@ public class NachbarschaftPhase2 {
 					union += neighbors.length - i;
 				if (j < otherNeighbors.length)
 					union += otherNeighbors.length - j;
-				System.out.println((double) intersection / union);
 				return (double) intersection / union;
 			}
 		}

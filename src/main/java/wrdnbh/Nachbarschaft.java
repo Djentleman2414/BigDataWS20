@@ -16,6 +16,7 @@ import org.apache.hadoop.util.ToolRunner;
 import com.sun.jersey.core.impl.provider.entity.XMLJAXBElementProvider.Text;
 
 import types.TextIntWritable;
+import wrdnbh.NachbarschaftPhase1.CombinerGroupingComparator;
 import wrdnbh.NachbarschaftPhase1.NeighborCountCombiner;
 import wrdnbh.NachbarschaftPhase1.NeighborCountReducer;
 import wrdnbh.NachbarschaftPhase1.NeighborCounter;
@@ -43,6 +44,8 @@ public class Nachbarschaft extends Configured implements Tool {
 	public int run(String[] args) throws Exception {
 		if (!args[1].endsWith("/"))
 			args[1] += '/';
+		
+		int numReduceTasks = args[2] == "t" ? 64 : 10;
 
 		Random r = new Random();
 		Configuration conf = getConf();
@@ -51,7 +54,7 @@ public class Nachbarschaft extends Configured implements Tool {
 		conf.setInt("SEED", r.nextInt());
 		conf.setDouble(MIN_JACCARD_INDEX, 0.5);
 
-		Job job = getFirstJob(args, conf);
+		Job job = getFirstJob(args, conf, numReduceTasks);
 
 		if (!job.waitForCompletion(true))
 			return -1;
@@ -61,7 +64,7 @@ public class Nachbarschaft extends Configured implements Tool {
 		
 		setBands(wordCount, conf);
 
-		job = getSecondJob(args[1], conf);
+		job = getSecondJob(args[1], conf, numReduceTasks);
 
 		return job.waitForCompletion(true) ? 0 : -1;
 	}
@@ -84,7 +87,7 @@ public class Nachbarschaft extends Configured implements Tool {
 		System.exit(ToolRunner.run(new Nachbarschaft(), args));
 	}
 
-	private Job getFirstJob(String[] args, Configuration conf) throws IOException {
+	private Job getFirstJob(String[] args, Configuration conf, int numReduceTasks) throws IOException {
 		Job job = Job.getInstance(conf, getClass().getSimpleName() + "_firstPhase");
 
 		FileInputFormat.addInputPath(job, new Path(args[0]));
@@ -103,14 +106,17 @@ public class Nachbarschaft extends Configured implements Tool {
 		job.setOutputValueClass(OutArrayWritable.class);
 
 		job.setPartitionerClass(WordPartitioner.class);
+		job.setSortComparatorClass(CombinerGroupingComparator.class);
+		job.setCombinerKeyGroupingComparatorClass(CombinerGroupingComparator.class);
 		job.setGroupingComparatorClass(WordGroupingComparator.class);
 
-		job.setNumReduceTasks(64);
+		
+		job.setNumReduceTasks(numReduceTasks);
 
 		return job;
 	}
 
-	private Job getSecondJob(String folder, Configuration conf) throws IOException {
+	private Job getSecondJob(String folder, Configuration conf, int numReduceTasks) throws IOException {
 		Job job = Job.getInstance(conf, getClass().getSimpleName() + "_sndJob");
 
 		FileInputFormat.addInputPath(job, new Path(folder + "temp"));
@@ -127,7 +133,7 @@ public class Nachbarschaft extends Configured implements Tool {
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(Text.class);
 
-		job.setNumReduceTasks(64);
+		job.setNumReduceTasks(numReduceTasks);
 
 		return job;
 	}

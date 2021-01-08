@@ -15,15 +15,14 @@ public class MinHash {
 	
 	private void init(int numOfHashes, int seed) {
 		signature = new int[numOfHashes];
+		reset();
 		Random r = new Random(seed);
-		
-		int quarter = LARGE_PRIME / 4;
 		
 		// h_i(x) = (a_i * x) + b_i
 		hashCoefs = new int[numOfHashes][2];
 		for(int i = 0; i < numOfHashes; i++) {
-			hashCoefs[i][0] = r.nextInt(quarter) + 1; 
-			hashCoefs[i][1] = r.nextInt(quarter) + 1; 
+			hashCoefs[i][0] = r.nextInt(LARGE_PRIME) + 1; 
+			hashCoefs[i][1] = r.nextInt(LARGE_PRIME) + 1; 
 		}
 	}
 	
@@ -42,7 +41,9 @@ public class MinHash {
 	}
 	
 	private int h(int value, int index) {
-		return (int) ((hashCoefs[index][0] * (long) value + hashCoefs[index][1]) % LARGE_PRIME);
+		long hash = hashCoefs[index][0] * (long) value + hashCoefs[index][1];
+		int i = (int) Math.floorMod(hash,LARGE_PRIME);
+		return i;
 	}
 	
 	public void reset() {
