@@ -30,9 +30,17 @@ import types.IntPairWritable;
 
 public class MatMul extends Configured implements Tool {
 
-	public static final int MAX_BUCKET_SIZE = 2000000;
-	public static final int MIN_BUCKET_SIZE = 20000;
-	public static final int MAX_REDUCE_TASKS = 10;
+	public static final int MAX_BUCKET_SIZE = 50000000; // 5 * 10^7
+	public static final int MIN_BUCKET_SIZE = 100000;
+	public static final int MAX_REDUCE_TASKS = 32;
+
+	public static final String CONF_NUM_OF_ROWS_LEFT = "num.of.rows.left";
+	public static final String CONF_NUM_OF_COLUMNS_LEFT = "num.of.columns.left";
+	public static final String CONF_NUM_OF_ROWS_RIGHT = "num.of.rows.left";
+	public static final String CONF_NUM_OF_COLUMNS_RIGHT = "num.of.columns.left";
+	public static final String CONF_MAX_BUCKET_SIZE = "max.bucket.size";
+	public static final String CONF_NUM_OF_BUCKETS = "num.of.buckets";
+	public static final String CONF_ROWS_PER_BUCKET = "rows.per.bucket";
 
 	public static void main(String[] args) throws Exception {
 		int exitcode = ToolRunner.run(new MatMul(), args);
@@ -47,14 +55,25 @@ public class MatMul extends Configured implements Tool {
 			return -1;
 		}
 
+		Job job;
 		Configuration conf = getConf();
 
-		int numOfBuckets = getMatrixDimensions(conf, args[0]);
+		int[] dimensions = parseMatrixDimensions(conf, args[0], args[1]);
+		boolean small = dimensions[1] + dimensions[3] <= MAX_BUCKET_SIZE;
 
-		Job job = getFirstJob(conf, args[0], args[1], args[2], numOfBuckets);
+		int numOfBuckets;
+		if (small) {
+			numOfBuckets = getNumerOfBucketsSmall(dimensions, conf);
+			job = getSmallJob(conf, args[0], args[1], args[2], numOfBuckets);
+		} else {
+			numOfBuckets = getNumberOfBuckets(dimensions, conf);
+			job = getFirstJob(conf, args[0], args[1], args[2], numOfBuckets);
+		}
 
-		if (!job.waitForCompletion(true))
-			return -1;
+		int err = job.waitForCompletion(true) ? 0 : -1;
+
+		if (small || err != 0)
+			return err;
 
 		job = getSecondJob(conf, args[2]);
 
@@ -80,18 +99,44 @@ public class MatMul extends Configured implements Tool {
 	 * Fall 3: Anzahl Elemente > MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
 	 * 
 	 * In diesem Fall werden MAX_REDUCE_TASKS Reducer erstellt. Die Anzahl der
-	 * Buckets entspricht Anzahl Elemente / MAX_BUCKET_SIZE da größere Buckets nicht
-	 * lokal gehalten werden können.
+	 * Buckets entspricht Anzahl Elemente / MAX_BUCKET_SIZE da größere Buckets
+	 * nicht lokal gehalten werden können.
 	 * 
 	 * 
 	 */
-	public int getMatrixDimensions(Configuration conf, String input0) {
-		String[] inputArray = input0.split("\\.")[0].split("-");
-		int rows = Integer.parseInt(inputArray[inputArray.length - 2]);
-		int columns = Integer.parseInt(inputArray[inputArray.length - 1]);
-		conf.setInt("NUM_OF_COLUMNS", columns);
+	public int[] parseMatrixDimensions(Configuration conf, String input0, String input1) {
+		int[] dimensions = new int[4];
+		String[] leftInputArray = input0.split("\\.")[0].split("-");
+		String[] rightInputArray = input0.split("\\.")[0].split("-");
+		int rowsLeft = Integer.parseInt(leftInputArray[leftInputArray.length - 2]);
+		int columnsLeft = Integer.parseInt(leftInputArray[leftInputArray.length - 1]);
+		int rowsRight = Integer.parseInt(rightInputArray[leftInputArray.length - 2]);
+		int columnsRight = Integer.parseInt(rightInputArray[leftInputArray.length - 1]);
+		conf.setInt(CONF_NUM_OF_ROWS_LEFT, rowsLeft);
+		conf.setInt(CONF_NUM_OF_COLUMNS_LEFT, columnsLeft);
+		conf.setInt(CONF_NUM_OF_ROWS_RIGHT, rowsRight);
+		conf.setInt(CONF_NUM_OF_COLUMNS_RIGHT, columnsRight);
+		dimensions[0] = rowsLeft;
+		dimensions[1] = columnsLeft;
+		dimensions[2] = rowsRight;
+		dimensions[3] = columnsRight;
 
-		int numOfElements = rows * columns;
+		return dimensions;
+
+	}
+
+	public int getNumerOfBucketsSmall(int[] dimensions, Configuration conf) {
+		int rowsPerBucket = Math.min(MAX_BUCKET_SIZE / (dimensions[1] + dimensions[3]), dimensions[0] / 10);
+		int numOfBuckets = dimensions[0] / rowsPerBucket + 1;
+		
+		conf.setInt(CONF_NUM_OF_BUCKETS, numOfBuckets);
+		conf.setInt(CONF_ROWS_PER_BUCKET, rowsPerBucket);
+
+		return numOfBuckets;
+	}
+
+	public int getNumberOfBuckets(int[] dimensions, Configuration conf) {
+		int numOfElements = dimensions[0] * dimensions[1];
 		int numOfBuckets = 1;
 		int maxBucketSize = MAX_BUCKET_SIZE;
 
@@ -106,10 +151,36 @@ public class MatMul extends Configured implements Tool {
 			numOfBuckets = (int) Math.ceil((double) numOfElements / MAX_BUCKET_SIZE);
 		}
 
-		conf.setInt("MAX_BUCKET_SIZE", maxBucketSize);
-		conf.setInt("NUM_OF_BUCKETS", numOfBuckets);
+		conf.setInt(CONF_MAX_BUCKET_SIZE, maxBucketSize);
+		conf.setInt(CONF_NUM_OF_BUCKETS, numOfBuckets);
 
 		return numOfBuckets;
+	}
+
+	public Job getSmallJob(Configuration conf, String matrix0, String matrix1, String outputFolder, int numOfBuckets)
+			throws IOException {
+		Job job = Job.getInstance(conf, MatMul.class.getSimpleName());
+		MultipleInputs.addInputPath(job, new Path(matrix0), TextInputFormat.class,
+				AlternativeMapReduce.LeftMatrixMapper.class);
+		MultipleInputs.addInputPath(job, new Path(matrix1), TextInputFormat.class,
+				AlternativeMapReduce.RightMatrixMapper.class);
+		FileOutputFormat.setOutputPath(job, new Path(outputFolder));
+
+		job.setJarByClass(MatMul.class);
+		job.setReducerClass(AlternativeMapReduce.MatMulReducer.class);
+
+		job.setMapOutputKeyClass(MapKeyClass.class);
+		job.setMapOutputValueClass(MatrixEntry.class);
+		job.setOutputKeyClass(IntPairWritable.class);
+		job.setOutputValueClass(DoubleWritable.class);
+
+		job.setPartitionerClass(MatrixPartitioner.class);
+		job.setGroupingComparatorClass(MatrixGroupingComparator.class);
+		job.setSortComparatorClass(MatrixSortingComparator.class);
+
+		job.setNumReduceTasks(Math.min(numOfBuckets, MAX_REDUCE_TASKS));
+
+		return job;
 	}
 
 	public Job getFirstJob(Configuration conf, String matrix0, String matrix1, String outputFolder, int numOfBuckets)

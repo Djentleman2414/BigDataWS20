@@ -4,7 +4,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.commons.net.io.FromNetASCIIInputStream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.Text;
@@ -285,9 +284,9 @@ public class FirstPhase {
 
 		public void setup(Context context) {
 			Configuration conf = context.getConfiguration();
-			maxBucketSize = conf.getInt("MAX_BUCKET_SIZE", 1);
-			numOfBuckets = conf.getInt("NUM_OF_BUCKETS", 1);
-			numOfColumns = conf.getInt("NUM_OF_COLUMNS", 0);
+			maxBucketSize = conf.getInt(MatMul.CONF_MAX_BUCKET_SIZE, 1);
+			numOfBuckets = conf.getInt(MatMul.CONF_NUM_OF_BUCKETS, 1);
+			numOfColumns = conf.getInt(MatMul.CONF_NUM_OF_COLUMNS_LEFT, 0);
 			// System.out.println("ABCD setup: " + maxBucketSize + " " + numOfBuckets + " "
 			// + numOfColumns);
 		}
@@ -409,129 +408,62 @@ public class FirstPhase {
 
 		private MatrixEntry[] leftMatrixEntries;
 
-		int numOfEntries;
-		int firstColumnInFirstRow;
-		int firstRow;
-		int lastRow;
-		int lastColumnInLastRow;
-		int numOfColumns;
+		private int firstRow;
+		private int firstColumn;
+		private int numOfColumns;
 
 		public void setup(Context context) {
 			Configuration conf = context.getConfiguration();
-			int maxBucketSize = conf.getInt("MAX_BUCKET_SIZE", 0);
+			int maxBucketSize = conf.getInt(MatMul.CONF_MAX_BUCKET_SIZE, 0);
 			leftMatrixEntries = new MatrixEntry[maxBucketSize];
-			numOfColumns = conf.getInt("NUM_OF_COLUMNS", 0);
+			numOfColumns = conf.getInt(MatMul.CONF_NUM_OF_COLUMNS_LEFT, 0);
 		}
 
 		public void reduce(MapKeyClass key, Iterable<MatrixEntry> values, Context context)
 				throws IOException, InterruptedException {
 
-			numOfEntries = 0;
-
-			boolean aufRechtsGewechselt = false;
-			int previousRow = 0;
-			int previousColumn = 0;
-
 			for (MatrixEntry value : values) {
-				if (!value.isLeft() && !aufRechtsGewechselt) {
-					firstColumnInFirstRow = leftMatrixEntries[0].getColumn();
-					firstRow = leftMatrixEntries[0].getRow();
-					lastRow = leftMatrixEntries[numOfEntries > 0 ? numOfEntries - 1 : 0].getRow();
-					lastColumnInLastRow = leftMatrixEntries[numOfEntries > 0 ? numOfEntries - 1 : 0].getColumn();
-					aufRechtsGewechselt = true;
-					findPairs(value.getRow(), value.getColumn(), value.getValue(), context);
-					// break;
-				} else if (!value.isLeft()) {
-					findPairs(value.getRow(), value.getColumn(), value.getValue(), context);
-				} else {
-					if (aufRechtsGewechselt) {
-						aufRechtsGewechselt = false;
-						numOfEntries = 0;
-					}
-					int currentColumn = value.getColumn();
-					int currentRow = value.getRow();
-					if (!(numOfEntries == 0)) {
-
-						if (currentRow == previousRow) {
-							if (previousColumn - currentColumn < -1) {
-								numOfEntries += currentColumn - (previousColumn + 1);
-							}
-						} else {
-							int uebersprungeneZeilen = currentRow - previousRow;
-							numOfEntries += (uebersprungeneZeilen - 1) * numOfColumns;
-							numOfEntries += currentColumn;
-							numOfEntries += numOfColumns - (previousColumn + 1);
-						}
-					}
-					if (leftMatrixEntries[numOfEntries] == null) {
-						leftMatrixEntries[numOfEntries] = new MatrixEntry();
-					}
-					leftMatrixEntries[numOfEntries++].set(value.getRow(), value.getColumn(), value.getValue());
-					previousColumn = currentColumn;
-					previousRow = currentRow;
-				}
+				firstRow = value.getRow();
+				firstColumn = value.getColumn();
+				if (leftMatrixEntries[0] == null)
+					leftMatrixEntries[0] = new MatrixEntry();
+				leftMatrixEntries[0].set(value.getRow(), value.getColumn(), value.getValue());
+				break;
 			}
 
+			for (MatrixEntry value : values) {
+				if (!value.isLeft()) {
+					findPairs(value.getRow(), value.getColumn(), value.getValue(), context);
+					break;
+				}
+				int index = getIndex(value.getRow(), value.getColumn());
+				if (leftMatrixEntries[index] == null)
+					leftMatrixEntries[index] = new MatrixEntry();
+				leftMatrixEntries[index].set(value.getRow(), value.getColumn(), value.getValue());
+			}
+
+			for (MatrixEntry value : values) {
+				findPairs(value.getRow(), value.getColumn(), value.getValue(), context);
+			}
+
+		}
+
+		private int getIndex(int row, int column) {
+			return (row - firstRow) * numOfColumns + column - firstColumn;
 		}
 
 		private void findPairs(int rightRow, int rightColumn, double value, Context context)
-				throws IOException, InterruptedException {
-			int searchedColumn = rightRow;
-			int[] searchResult = pickingSearch(searchedColumn);
-			int lastIndex = searchResult[0];
-			int examinedRows = searchResult[1];
-			if (lastIndex != -1) {
-				write(context, firstRow, rightColumn, lastIndex, value);
-
-				if (!(lastRow - (firstRow + examinedRows) == 0)) {
-					for (int leftRow = firstRow + examinedRows; leftRow <= lastRow; leftRow++) {
-						if (leftRow == lastRow) {
-							if (!(lastColumnInLastRow < searchedColumn)) {
-								lastIndex += numOfColumns;
-								write(context, leftRow, rightColumn, lastIndex, value);
-							}
-						} else {
-							lastIndex += numOfColumns;
-							write(context, leftRow, rightColumn, lastIndex, value);
-						}
-
-					}
+				throws IOException, InterruptedException {		
+			int index = getIndex(firstColumn <= rightRow ? firstRow : firstRow + 1, rightRow);		
+			while(index < leftMatrixEntries.length) {
+				MatrixEntry leftEntry = leftMatrixEntries[index];
+				if(leftEntry != null) {
+					outKey.set(leftEntry.getRow(), rightColumn);
+					outValue.set(leftEntry.getValue() * value);
+					context.write(outKey, outValue);
 				}
+				index += numOfColumns;
 			}
 		}
-
-		private int[] pickingSearch(int searchedColumn) {
-			int[] result = { -1, 1 };
-			if (firstColumnInFirstRow <= searchedColumn) {
-				result[1] = 1;
-				result[0] = searchedColumn - firstColumnInFirstRow;
-			} else if (firstRow == lastRow) {
-				result[1] = 1;
-				result[0] = -1;
-			} else if (firstRow + 1 == lastRow) {
-				if (lastColumnInLastRow < searchedColumn) {
-					result[1] = 2;
-					result[0] = -1;
-				} else {
-					result[1] = 2;
-					result[0] = numOfEntries - (lastColumnInLastRow - searchedColumn);
-				}
-			} else {
-				result[1] = 1;
-				result[0] = numOfColumns - (firstColumnInFirstRow - searchedColumn);
-			}
-			return result;
-		}
-
-		private void write(Context context, int leftRow, int rightColumn, int lastIndex, double value)
-				throws IOException, InterruptedException {
-			if (leftMatrixEntries[lastIndex] != null) {
-				outKey.set(leftRow, rightColumn);
-				outValue.set(leftMatrixEntries[lastIndex].getValue() * value);
-				context.write(outKey, outValue);
-			}
-		}
-
 	}
-
 }
