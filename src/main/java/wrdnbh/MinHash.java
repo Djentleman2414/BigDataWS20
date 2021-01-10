@@ -34,6 +34,11 @@ public class MinHash {
 		return signature.length;
 	}
 	
+	/**
+	 * Die Signatur wird aus den n Hashfunktionen h_i(x) = a_i * x + b_i % LARGE_PRIME
+	 * berechnet. Die Signatur wird angepasst wenn h_i(x) < s[i]
+	 * @param value
+	 */
 	public void updateSignature(int value) {
 		for(int i = 0; i < signature.length; i++) {
 			signature[i] = Math.min(signature[i], h(value, i));

@@ -29,11 +29,11 @@ import wrdnbh.NachbarschaftPhase2.MinHashMapper;
 import wrdnbh.NachbarschaftPhase2.SimilarityReducer;
 
 public class Nachbarschaft extends Configured implements Tool {
-	
+
 	public final static int MAX_AVERAGE_WORDS_PER_REDUCER = 1000000;
 	public final static double ASSUMED_AVERAGE_JACCARD_INDEX = 0.3;
 	public static final double MIN_COLLISION_RATE = 0.8;
-	
+
 	public final static String MAX_DISTANCE = "max.distance";
 	public final static String MIN_NEIGHBOR_COUNT = "min.count";
 	public final static String NUM_OF_BANDS = "num.bands";
@@ -42,9 +42,13 @@ public class Nachbarschaft extends Configured implements Tool {
 
 	@Override
 	public int run(String[] args) throws Exception {
+		// es gibt 3 Argumente, input, outputFolder und ein Flag der angibt, ob es sich
+		// um den kleinen oder großen Datensatz handelt. Letzteres ist dafür gedacht
+		// nicht immer die volle Anzahl an Reducern zu verwenden (wenn man einfach nur testen möchte)
+
 		if (!args[1].endsWith("/"))
 			args[1] += '/';
-		
+
 		int numReduceTasks = args[2] == "t" ? 64 : 10;
 
 		Random r = new Random();
@@ -61,25 +65,39 @@ public class Nachbarschaft extends Configured implements Tool {
 
 		long wordCount = job.getCounters()
 				.findCounter("org.apache.hadoop.mapreduce.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
-		
+
 		setBands(wordCount, conf);
 
 		job = getSecondJob(args[1], conf, numReduceTasks);
 
 		return job.waitForCompletion(true) ? 0 : -1;
 	}
-	
+
+	/*
+	 * Sei s die durchschnittliche Jaccard-Ähnlichkeit. Die Wahrscheinlichkeit, dass
+	 * 2 Mengen in einem Band unterschiedlich sind liegt bei (1-s^r). Die
+	 * Wahrscheinlichkeit, dass l+1 (~= l, da l >> 1) Werte in einem Band
+	 * unterschiedlich sind, liegt bei (1-s^r)^l Wenn man jetzt annimmt, dass dies
+	 * ab einem L mit (1-s^r)^L < 0.0001 nicht mehr vorkommt (eine sehr vereinfachte
+	 * Annahme), dann gibt es L verschiedene Buckets in einem Band. Dieses L setzt
+	 * man dann in m = n / L ein. wobei n die Anzahl aller Wörter ist und demnach m
+	 * die maximale Anzahl an Wörtern pro Bucket. m kann man dann auf eine Zahl
+	 * (hier 1e6) festelegen und so die Mindestanzahl der Hashes pro band (r)
+	 * bestimmen. Über diese Zahl kommt man dann wiederum an die Anzahl der Bänder,
+	 * sodass 2 Worte mit der Wahrscheinlichkeit MIN_COLLISION_RATE nicht in allen
+	 * Bändern verschieden sind.
+	 */
 	public void setBands(long numOfWords, Configuration conf) {
-		double interValue = Math.log(1-Math.pow(10000, -(double) MAX_AVERAGE_WORDS_PER_REDUCER / numOfWords));
+		double interValue = Math.log(1 - Math.pow(10000, -(double) MAX_AVERAGE_WORDS_PER_REDUCER / numOfWords));
 		interValue /= Math.log(ASSUMED_AVERAGE_JACCARD_INDEX);
 		int r = Math.max(5, (int) Math.round(interValue));
-		interValue = Math.log(1-MIN_COLLISION_RATE);
-		interValue /= Math.log(1-Math.pow(0.5, r));
-		int b = Math.max(52,(int) Math.round(interValue));
-		
+		interValue = Math.log(1 - MIN_COLLISION_RATE);
+		interValue /= Math.log(1 - Math.pow(0.5, r));
+		int b = Math.max(52, (int) Math.round(interValue));
+
 		conf.setInt(NUM_OF_BANDS, b);
 		conf.setInt(NUM_OF_HASHES_PER_BAND, r);
-		
+
 		System.out.println("b:" + b + ", r:" + r);
 	}
 
@@ -110,7 +128,6 @@ public class Nachbarschaft extends Configured implements Tool {
 		job.setCombinerKeyGroupingComparatorClass(CombinerGroupingComparator.class);
 		job.setGroupingComparatorClass(WordGroupingComparator.class);
 
-		
 		job.setNumReduceTasks(numReduceTasks);
 
 		return job;

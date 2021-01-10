@@ -18,6 +18,13 @@ import types.TextIntWritable;
 
 public class NachbarschaftPhase1 {
 
+	/**
+	 * Es wird ein Hash eines Wortes und die Häufigkeit des Vorkommens gespeichert
+	 * Um Platz zu sparen ist die Häufigkeit als byte gespeichert. Ist die
+	 * Häufigkeit bereits >= der Mindesthäufigkeit, wird als Häufigkeit nur noch die
+	 * Mindesthäufigkeit gespeichert (sonst käme es bei einem byte schnell zu einem
+	 * Überlauf)
+	 */
 	public static class NeighborCounter implements Writable {
 
 		public static int minCount = 10; // h aus der Aufgabe
@@ -57,12 +64,6 @@ public class NachbarschaftPhase1 {
 
 		public static void setMinCount(int minCount) {
 			NeighborCounter.minCount = minCount;
-		}
-
-		public void increment() {
-			if (count < minCount) {
-				count++;
-			}
 		}
 
 		public void add(byte b) {
@@ -122,6 +123,14 @@ public class NachbarschaftPhase1 {
 
 	}
 
+	/**
+	 * Ein dynamisches "Array" um die Hashes der Nachbarn zu speichern Es wird
+	 * einmal ein (hoffentlich ausreichend) großes Array erstellt, welches in der
+	 * Größe aber dynamisch anpassbar ist Über entryCount wird gespeichert, wie
+	 * viele Hashes aktuell gespeichert sind So kann das selbe Array für beliebig
+	 * viele reduce Aufrufe genutzt werden ohne jedes mal ein neues Objekt erstellen
+	 * zu müssen
+	 */
 	public static class OutArrayWritable implements Writable {
 
 		int[] hashes;
@@ -247,6 +256,7 @@ public class NachbarschaftPhase1 {
 		private String[] words = new String[50];
 		private int wordCount;
 
+		// Das suchen nach häufigen Wörten ist in einer HashMap am schnellsten
 		public void setup(Context context) {
 			maxDistance = context.getConfiguration().getInt(Nachbarschaft.MAX_DISTANCE, 3);
 			for (String word : commonWords)
@@ -345,6 +355,8 @@ public class NachbarschaftPhase1 {
 			}
 
 			for (NeighborCounter value : values) {
+				// Hier wird die Sortierung der Hashes ausgenutzt. Ist der neue Hash ungleich
+				// dem akutellen, kann der aktuelle in Liste nicht mehr vorkommen
 				if (currentHash != value.getWordHash()) {
 					if (count >= NeighborCounter.minCount)
 						outValue.add(currentHash);

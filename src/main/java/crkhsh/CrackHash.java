@@ -42,8 +42,6 @@ public class CrackHash extends Configured implements Tool {
 		private int valueType;
 		private int id;
 		private char hint;
-		
-		
 
 		public MapValue() {
 		}
@@ -291,6 +289,8 @@ public class CrackHash extends Configured implements Tool {
 		private Text outKey = new Text();
 		private MapValue outValue = new MapValue();
 
+		private StringBuilder sb = new StringBuilder();
+
 		public void setup(Context context) {
 			alphabetSize = context.getConfiguration().getInt(AlphabetGenerator.ALPHABETSIZE, 0);
 			subset = new char[alphabetSize - 1];
@@ -302,6 +302,7 @@ public class CrackHash extends Configured implements Tool {
 			System.out.println("ABCD " + c);
 			int i = 0;
 			int j = 0;
+			// Schreibt alle Buchstaben, auﬂer dem gesuchten, in ein Array
 			while (i < alphabetSize) {
 				if (c != (char) (65 + i)) {
 					subset[j] = (char) ('A' + i);
@@ -312,13 +313,16 @@ public class CrackHash extends Configured implements Tool {
 
 			outValue.setHint(c);
 			try {
-				generateAllPermutations(subset, subset.length, c, context);
+				generateAllPermutations(subset, subset.length, context);
 			} catch (NoSuchAlgorithmException e) {
 				throw new IOException(e);
 			}
 		}
 
-		public void generateAllPermutations(char[] array, int k, char missingChar, Context context)
+		/*
+		 * Implementation of Heap's Algorithm
+		 */
+		public void generateAllPermutations(char[] array, int k, Context context)
 				throws NoSuchAlgorithmException, IOException, InterruptedException {
 			if (k == 1) {
 				outKey.set(customHash(implodeCharArray(array)));
@@ -326,7 +330,7 @@ public class CrackHash extends Configured implements Tool {
 			}
 
 			for (int i = 0; i < k; i++) {
-				generateAllPermutations(array, k - 1, missingChar, context);
+				generateAllPermutations(array, k - 1, context);
 
 				if ((k & 1) == 1)
 					swapElements(array, 0, k - 1);
@@ -342,6 +346,14 @@ public class CrackHash extends Configured implements Tool {
 			char temp = array[a];
 			array[a] = array[b];
 			array[b] = temp;
+		}
+
+		public String implodeCharArray(char[] array) {
+			sb.setLength(0);
+			for (char c : array) {
+				sb.append(c);
+			}
+			return sb.toString();
 		}
 	}
 
@@ -398,7 +410,7 @@ public class CrackHash extends Configured implements Tool {
 		}
 	}
 
-	public static class IdentityMapper extends Mapper<LongWritable, Text, IntWritable, SecondMapValue> {
+	public static class HintMapper extends Mapper<LongWritable, Text, IntWritable, SecondMapValue> {
 
 		private IntWritable outKey = new IntWritable();
 		private SecondMapValue outValue = new SecondMapValue();
@@ -449,6 +461,8 @@ public class CrackHash extends Configured implements Tool {
 
 		private String hash;
 		private Text outValue = new Text();
+
+		StringBuilder sb = new StringBuilder();
 
 		public void setup(Context context) {
 			int passwordSize = context.getConfiguration().getInt(PASSWORDSIZE, 0);
@@ -514,14 +528,14 @@ public class CrackHash extends Configured implements Tool {
 			}
 			return passwordString;
 		}
-	}
 
-	public static String implodeCharArray(char[] array) {
-		StringBuilder sb = new StringBuilder();
-		for (char c : array) {
-			sb.append(c);
+		public String implodeCharArray(char[] array) {
+			sb.setLength(0);
+			for (char c : array) {
+				sb.append(c);
+			}
+			return sb.toString();
 		}
-		return sb.toString();
 	}
 
 	public static String customHash(String code) throws NoSuchAlgorithmException, UnsupportedEncodingException {
@@ -561,10 +575,6 @@ public class CrackHash extends Configured implements Tool {
 		if (!args[1].endsWith("/"))
 			args[1] += '/';
 
-//		try(FileSystem fs = in.getFileSystem(getConf())) {
-//			fs.createNewFile(empty);
-//		}
-
 		MultipleInputs.addInputPath(job, empty, AlphabetInputFormat.class, PermutationMapper.class);
 		MultipleInputs.addInputPath(job, in, TextInputFormat.class, HashMapper.class);
 		FileOutputFormat.setOutputPath(job, new Path(args[1] + "temp"));
@@ -591,7 +601,7 @@ public class CrackHash extends Configured implements Tool {
 		FileOutputFormat.setOutputPath(job, new Path(folder + "final"));
 
 		job.setJarByClass(CrackHash.class);
-		job.setMapperClass(IdentityMapper.class);
+		job.setMapperClass(HintMapper.class);
 		job.setReducerClass(CrackHashReducer.class);
 		job.setMapOutputKeyClass(IntWritable.class);
 		job.setMapOutputValueClass(SecondMapValue.class);

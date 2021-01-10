@@ -20,6 +20,12 @@ import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
+/**
+ * Erzeugt FakeInputs die jeweils ein Zeichen des Alphabets sind
+ * Die Anzahl Splits ist die größe des Albphabets,
+ * da bei jedem Zeichen alle K-1 Permutationen im Mapper
+ * erzeugt werden (diese Last gilt es zu verteilen)
+ */
 public class AlphabetGenerator {
 
 	public static final String ALPHABETSIZE = "alphabetsize";
@@ -195,6 +201,7 @@ public class AlphabetGenerator {
 		}	
 	}
 	
+	// nur zum Testen
 	public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {
 		Job job = Job.getInstance();
 		Configuration conf = job.getConfiguration();

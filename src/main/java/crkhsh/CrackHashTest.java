@@ -17,7 +17,7 @@ import org.junit.Test;
 import crkhsh.AlphabetGenerator.CharWritable;
 import crkhsh.CrackHash.CrackHashReducer;
 import crkhsh.CrackHash.HintReducer;
-import crkhsh.CrackHash.IdentityMapper;
+import crkhsh.CrackHash.HintMapper;
 import crkhsh.CrackHash.MapValue;
 import crkhsh.CrackHash.PermutationMapper;
 import crkhsh.CrackHash.SecondMapValue;
@@ -39,7 +39,7 @@ public class CrackHashTest {
 	public void setUp() {
 		PermutationMapper mapper1_1 = new PermutationMapper(); 
 		HashMapper mapper1_2 = new HashMapper();
-		IdentityMapper mapper2 = new IdentityMapper();
+		HintMapper mapper2 = new HintMapper();
 		HintReducer reducer1 = new HintReducer();
 		HintCombiner combiner = new HintCombiner();
 		CrackHashReducer reducer2 = new CrackHashReducer();
@@ -241,7 +241,7 @@ public class CrackHashTest {
 		LongWritable key = new LongWritable();
 		mapReduceDriver2.getConfiguration().setInt("PASSWORDSIZE", 5);
 		mapReduceDriver2.getConfiguration().setInt("ALPHABETSIZE", 5);
-		IdentityMapper mapper = new IdentityMapper();
+		HintMapper mapper = new HintMapper();
 		
 		String hash1 = CrackHash.customHash("ABBBA");
 		String hash2 = CrackHash.customHash("AACCC");

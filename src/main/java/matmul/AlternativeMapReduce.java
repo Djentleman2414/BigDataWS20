@@ -72,31 +72,30 @@ public class AlternativeMapReduce {
 			resultMatrixEntries = new MatrixEntry[rowsPerBucket * numOfColumnsRight];
 		}
 
+		public void setup(int rowsPerBucket, int numOfColumnsLeft, int numOfColumnsRight) {
+			this.rowsPerBucket = rowsPerBucket;
+			this.numOfColumnsLeft = numOfColumnsLeft;
+			this.numOfColumnsRight = numOfColumnsRight;
+			leftMatrixEntries = new MatrixEntry[rowsPerBucket * numOfColumnsLeft];
+			resultMatrixEntries = new MatrixEntry[rowsPerBucket * numOfColumnsRight];
+		}
+
 		public void reduce(MapKeyClass key, Iterable<MatrixEntry> values, Context context)
 				throws IOException, InterruptedException {
 
-			for (MatrixEntry value : values) {
-				firstRow = value.getRow();
-				int index = getIndex(value.getRow(), value.getColumn());
-				if (leftMatrixEntries[index] == null)
-					leftMatrixEntries[index] = new MatrixEntry();
-				leftMatrixEntries[index].set(value.getRow(), value.getColumn(), value.getValue());
-				break;
-			}
+			firstRow = -1;
 
 			for (MatrixEntry value : values) {
-				if (!value.isLeft()) {
+				if (firstRow == -1)
+					firstRow = value.getRow();
+				if (value.isLeft()) {
+					int index = getIndexLeft(value.getRow(), value.getColumn());
+					if (leftMatrixEntries[index] == null)
+						leftMatrixEntries[index] = new MatrixEntry();
+					leftMatrixEntries[index].set(value.getRow(), value.getColumn(), value.getValue());
+				} else {
 					findPairs(value.getRow(), value.getColumn(), value.getValue());
-					break;
 				}
-				int index = getIndex(value.getRow(), value.getColumn());
-				if (leftMatrixEntries[index] == null)
-					leftMatrixEntries[index] = new MatrixEntry();
-				leftMatrixEntries[index].set(value.getRow(), value.getColumn(), value.getValue());
-			}
-
-			for (MatrixEntry value : values) {
-				findPairs(value.getRow(), value.getColumn(), value.getValue());
 			}
 
 			for (MatrixEntry e : resultMatrixEntries) {
@@ -107,19 +106,22 @@ public class AlternativeMapReduce {
 					e.set(-1, -1, 0);
 				}
 			}
-
 		}
 
-		private int getIndex(int row, int column) {
+		private int getIndexLeft(int row, int column) {
 			return (row - firstRow) * numOfColumnsLeft + column;
 		}
 
+		private int getIndexResult(int row, int column) {
+			return (row - firstRow) * numOfColumnsRight + column;
+		}
+
 		private void findPairs(int rightRow, int rightColumn, double value) {
-			int leftIndex = getIndex(firstRow, rightRow);
+			int leftIndex = getIndexLeft(firstRow, rightRow);
 			for (int i = 0; i < rowsPerBucket; i++) {
 				MatrixEntry leftEntry = leftMatrixEntries[leftIndex];
-				if (leftEntry != null) {
-					int resultIndex = getIndex(leftEntry.getRow(), rightColumn);
+				if (leftEntry != null && leftEntry.getRow() != -1) {
+					int resultIndex = getIndexResult(leftEntry.getRow(), rightColumn);
 					if (resultMatrixEntries[resultIndex] == null) {
 						resultMatrixEntries[resultIndex] = new MatrixEntry(leftEntry.getRow(), rightColumn,
 								value * leftEntry.getValue());

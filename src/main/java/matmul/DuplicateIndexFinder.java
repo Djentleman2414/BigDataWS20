@@ -1,7 +1,7 @@
 package matmul;
 
 import java.io.IOException;
-import java.util.Iterator;
+import java.util.ArrayList;
 
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
@@ -30,18 +30,28 @@ public class DuplicateIndexFinder extends Configured implements Tool {
 			String[] split = value.toString().split("\t");
 			outKey.set(Integer.parseInt(split[0]), Integer.parseInt(split[1]));
 			outValue.set(Double.parseDouble(split[2]));
-			context.write(outKey, outValue);
+			//if(outKey.getX() >= 1000 || outKey.getY() >= 800 || outKey.getX() < 0 || outKey.getY() < 0)
+				context.write(outKey, outValue);
 		}
 	}
 	
 	public static class IndexReducer extends Reducer<IntPairWritable, DoubleWritable, IntPairWritable, DoubleWritable> {
 		
+		public DoubleWritable outValue =  new DoubleWritable();
+		
 		public void reduce(IntPairWritable key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
-			if(Iterables.size(values) == 1)
-				return;
-			
+//			if(Iterables.size(values) == 1)
+//				return;
+			ArrayList<Double> list = new ArrayList<>();
 			for(DoubleWritable value : values)
-				context.write(key, value);
+				list.add(value.get());
+			
+			if(list.size() > 1) {
+				for(double d : list) {
+					outValue.set(d);
+					context.write(key, outValue);
+				}
+			}
 		}
 		
 	}

@@ -15,14 +15,24 @@ import org.apache.hadoop.mapreduce.Reducer;
 
 public class NachbarschaftPhase2 {
 
+	/**
+	 * Speichert ein Wort und die Hashes aller Nachbarn
+	 */
 	public static class BucketMapValue implements Writable {
 
 		private String word;
 		private int[] neighbors;
 		private int entryCount;
 
+		/**
+		 * Es wird ein Array erstellt, dass (hoffentlich) groß genug für alle Nachbarn eines Wortes ist
+		 * Im Zweifel wird die Größe dynamisch angepasst.
+		 * Über entryCount wird gespeichert, wie viele Nachbarn im Array stehen.
+		 * So kann das selbe BucketMapValue Objekt für jedes neue Wort das selbe neighbors Array benutzen,
+		 * es muss also nicht immer ein neues Array erstellt werden.
+		 */
 		public BucketMapValue() {
-			neighbors = new int[10000];
+			neighbors = new int[100000];
 		}
 
 		public BucketMapValue(String word, int[] neighbors, int entryCount) {
@@ -172,6 +182,13 @@ public class NachbarschaftPhase2 {
 			outValue.reset();
 		}
 
+		/*
+		 * Die buckets werden aus den r MinHash-Werten s_i, ..., s_(i+r) eines Bandes berchnet
+		 * 1 Band -> 1 Bucket.
+		 * Die Buckets berechnen sich aus:
+		 * b_k = s_(i+r) + a_k * (s_(i+r-r) + (a_k * ... (s_(i+1) + a_k * s_i) ... )
+		 * mit 1 <= a_k <= SMALL_PRIME - 1
+		 */
 		private void setBuckets(int[] signature) {
 			r.setSeed(seed);
 			for (int band = 0; band < buckets.length; band++) {
@@ -276,6 +293,16 @@ public class NachbarschaftPhase2 {
 				int j = 0;
 
 				while (i < neighbors.length && j < otherNeighbors.length) {
+					/*
+					 * Betrachte die Sets:
+					 *  1 3 4 8 10
+					 *  1 2 3 9 10 11
+					 *  Erst stehen i und j jeweils auf der 1, es wird also in den ersten Zweig gegangen,
+					 *  anschließend steht i auf der 3, j auf der 2, es wird in den 3. Zweig gegangen und danach
+					 *  steht j auch auf 3, es wird also wieder im 1. Zweig weitergezählt.
+					 *  Da die Werte sortiert angekommen, können wir immer ein einem der beiden Arrays weiterzählen
+					 *  bis wir einen Wert finden der größer/gleich dem aktuellen Wert aus dem anderen Array ist
+					 */
 					while (i < neighbors.length && j < otherNeighbors.length && neighbors[i] == otherNeighbors[j]) {
 						union++;
 						intersection++;
@@ -295,6 +322,8 @@ public class NachbarschaftPhase2 {
 						}
 				}
 
+				// Außer denn das letzte Element beider Arrays gleich ist, wird in einem Array nicht bis zu Ende gezählt
+				// die Differenz wird hier auf die Union addiert
 				if (i < neighbors.length)
 					union += neighbors.length - i;
 				if (j < otherNeighbors.length)
