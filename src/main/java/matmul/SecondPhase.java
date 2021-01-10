@@ -18,10 +18,7 @@ public class SecondPhase {
 		
 	}
 	
-	/**
-	 * Hier werden die Produkte noch miteinander multipliziert.
-	 * Dieser Reducer kann auch als Combiner genutzt werden.
-	 */
+	// can also be used as Combiner
 	public static class MatrixEntryReducer extends Reducer<IntPairWritable, DoubleWritable, IntPairWritable, DoubleWritable> {
 		
 		private DoubleWritable outValue = new DoubleWritable();

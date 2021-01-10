@@ -80,7 +80,30 @@ public class MatMul extends Configured implements Tool {
 		return job.waitForCompletion(true) ? 0 : -1;
 	}
 
-
+	/**
+	 * Bei dieser Funktion werden drei Fälle unterschieden.
+	 * 
+	 * 
+	 * Fall 1: MIN_BUCKET_SIZE * MAX_REDUCE_TASKS < Anzahl Elemente
+	 * 
+	 * Die Bucketgröße entspricht MIN_BUCKET_SIZE, da kleinere Buckets den
+	 * Mehraufwand nicht wert wären. Es werden soviele Buckets mit der Größe
+	 * MIN_BUCKET_SIZE erstellt wie nötig. Die Anzahl Buckets entspricht in diesem
+	 * Fall der Anzahl der Reducer
+	 * 
+	 * Fall 2: Anzahl Elemente < MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
+	 * 
+	 * In diesem Fall sollen MAX_REDUCE_TASKS Reducer und Buckets erzeugt werden.
+	 * Die Bucketgröße entspricht Anzahl Elemente / MAX_REDUCE_TASKS
+	 * 
+	 * Fall 3: Anzahl Elemente > MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
+	 * 
+	 * In diesem Fall werden MAX_REDUCE_TASKS Reducer erstellt. Die Anzahl der
+	 * Buckets entspricht Anzahl Elemente / MAX_BUCKET_SIZE da größere Buckets
+	 * nicht lokal gehalten werden können.
+	 * 
+	 * 
+	 */
 	public int[] parseMatrixDimensions(Configuration conf, String input0, String input1) {
 		int[] dimensions = new int[4];
 		String[] leftInputArray = input0.split("\\.")[0].split("-");
@@ -105,36 +128,13 @@ public class MatMul extends Configured implements Tool {
 	public int getNumerOfBucketsSmall(int[] dimensions, Configuration conf) {
 		int rowsPerBucket = Math.min(MAX_BUCKET_SIZE / (dimensions[1] + dimensions[3]), dimensions[0] / 10);
 		int numOfBuckets = dimensions[0] / rowsPerBucket + 1;
-
+		
 		conf.setInt(CONF_NUM_OF_BUCKETS, numOfBuckets);
 		conf.setInt(CONF_ROWS_PER_BUCKET, rowsPerBucket);
 
 		return numOfBuckets;
 	}
 
-	/**
-	 * Hier wird dynamisch die Anzahl der Reducer Tasks, die Anzahl der Buckets und
-	 * die Größe der Buckets berechnet. Bei dieser Funktion werden drei Fälle
-	 * unterschieden.
-	 * 
-	 * Fall 1: MIN_BUCKET_SIZE * MAX_REDUCE_TASKS < Anzahl Elemente
-	 * 
-	 * Die Bucketgröße entspricht MIN_BUCKET_SIZE, da kleinere Buckets den
-	 * Mehraufwand nicht wert wären. Es werden soviele Buckets mit der Größe
-	 * MIN_BUCKET_SIZE erstellt wie nötig. Die Anzahl Buckets entspricht in diesem
-	 * Fall der Anzahl der Reducer
-	 * 
-	 * Fall 2: Anzahl Elemente < MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
-	 * 
-	 * In diesem Fall sollen MAX_REDUCE_TASKS Reducer und Buckets erzeugt werden.
-	 * Die Bucketgröße entspricht Anzahl Elemente / MAX_REDUCE_TASKS
-	 * 
-	 * Fall 3: Anzahl Elemente > MAX_BUCKET_SIZE * MAX_REDUCE_TASKS
-	 * 
-	 * In diesem Fall werden MAX_REDUCE_TASKS Reducer erstellt. Die Anzahl der
-	 * Buckets entspricht Anzahl Elemente / MAX_BUCKET_SIZE da größere Buckets nicht
-	 * lokal gehalten werden können.
-	 */
 	public int getNumberOfBuckets(int[] dimensions, Configuration conf) {
 		int numOfElements = dimensions[0] * dimensions[1];
 		int numOfBuckets = 1;
