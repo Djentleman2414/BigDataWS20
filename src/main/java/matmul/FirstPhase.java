@@ -18,6 +18,9 @@ import types.IntPairWritable;
 
 public class FirstPhase {
 
+	/**
+	 * Klasse für die Values in der ersten Phase
+	 */
 	public static class MatrixEntry implements Writable, Cloneable {
 
 		private int row;
@@ -138,6 +141,10 @@ public class FirstPhase {
 		}
 	}
 
+	/**
+	 * Klasse für die Keys in der ersten Phase Entscheidend ist hier die
+	 * Bucketnummer
+	 */
 	public static class MapKeyClass implements WritableComparable<MapKeyClass>, Cloneable {
 
 		private int bucket;
@@ -268,6 +275,13 @@ public class FirstPhase {
 		}
 	}
 
+	/**
+	 * Abstrakte Klasse für den Mapper: Für die linke und die rechte Matrix gibt es
+	 * unterschiedliche Mapper mit einem gemeinsamen Kern. Hintergrund ist, dass die
+	 * Werte der Linken Matrix in Buckets aufgeteilt werden, die Werte der rechten
+	 * matrix jedoch an jeden Bucken "angehängt" werden. Die Buckets sind maximal so
+	 * groß, wie es der Hautspeicher zulässt.
+	 */
 	public static abstract class MatrixMapper extends Mapper<Object, Text, MapKeyClass, MatrixEntry> {
 
 		MapKeyClass outKey = new MapKeyClass();
@@ -278,7 +292,7 @@ public class FirstPhase {
 
 		protected int numOfColumns;
 
-		// wo werden die benutzt?
+		// TODO: Wo werden die beiden benutzt?
 		protected int wroteToContextLeft;
 		protected int wroteToContextRight;
 
@@ -287,8 +301,6 @@ public class FirstPhase {
 			maxBucketSize = conf.getInt(MatMul.CONF_MAX_BUCKET_SIZE, 1);
 			numOfBuckets = conf.getInt(MatMul.CONF_NUM_OF_BUCKETS, 1);
 			numOfColumns = conf.getInt(MatMul.CONF_NUM_OF_COLUMNS_LEFT, 0);
-			// System.out.println("ABCD setup: " + maxBucketSize + " " + numOfBuckets + " "
-			// + numOfColumns);
 		}
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
@@ -307,6 +319,13 @@ public class FirstPhase {
 				throws IOException, InterruptedException;
 	}
 
+	/**
+	 * Die Werte aus der linken Matric werden entsprechend ihrer Position in der
+	 * Matrix in Buckets aufgeteilt. Die Eingabematritzen können beliebig groß sein,
+	 * d.h. es wird auch der Fall abgedeckt, dass eine Matrix mehr Spalten hat, als
+	 * Elemente in einen Bucket passen. Die Elemente des Bucket (also Werte aus der
+	 * linken Matrix) werden dann im Reducer im Hauptspeicher gehalten.
+	 */
 	public static class LeftMatrixMapper extends MatrixMapper {
 
 		public void setup(Context context) {
@@ -326,6 +345,10 @@ public class FirstPhase {
 		}
 	}
 
+	/**
+	 * Die Werte aus der rechten Matrix werden alle an jeden Bucket gesendet. Sie
+	 * werden jedoch dann nicht im Hauptspeicher behalten.
+	 */
 	public static class RightMatrixMapper extends MatrixMapper {
 
 		@Override
@@ -349,6 +372,9 @@ public class FirstPhase {
 		}
 	}
 
+	/**
+	 * Grouping nach Bucket
+	 */
 	public static class MatrixGroupingComparator extends WritableComparator {
 
 		public MatrixGroupingComparator() {
@@ -363,6 +389,11 @@ public class FirstPhase {
 		}
 	}
 
+	/**
+	 * Sortieren nach:
+	 * 
+	 * Bucket -> isLeft -> Row -> Column
+	 */
 	public static class MatrixSortingComparator extends WritableComparator {
 
 		public MatrixSortingComparator() {
@@ -387,19 +418,21 @@ public class FirstPhase {
 	}
 
 	/**
-	 * Änderungen ggü. vorher:
+	 * Wie bei den Mappern beschrieben werden hier bei jedem reduce Aufruf die Werte
+	 * des Buckets aus der Linken Matrix und die Werte der rechten Matrix
+	 * miteinander verrechnet. Dabei ist keine Sucheoperation nötig, da die
+	 * Positionen der Elemente im vorgehaltenen Array leftMatrixEntries bekannt
+	 * sind.
 	 * 
-	 * Es wird auf ein Target verzichtet, da es auch kein BinarySearch mehr gibt.
-	 * "picking Search" ist eine ausgedachte Funktion mit der der erste Eintrag der
-	 * gesuchten Spalte im Bucket gefunden werden kann. Eigentlich wird nicht
-	 * gesucht, sondern berechnet (O(1)). Es wird auf diverse Grenzwertfälle
-	 * geschaut (alle die mir aufgefallen sind). Damit sind wir in der Lage
-	 * unbegrenzt große Matrizen aufzunehmen bei endlich großen Buckets.
-	 * 
-	 * Nachdem der richtige erste Index gefunden wurde, wird für die nächsten
-	 * Kandidaten einfach + NUM_OF_COLUMNS gerechnet. Viel mehr passiert auch nicht.
-	 * 
-	 *
+	 * Idee: Zunächst stehen in "values" die Werte des Buckets aus der Liken Matrix,
+	 * die leftMatrixEntries hinzugefügt werden. 0-Werte werden dabei nicht gesetzt,
+	 * aber die Positionen übersprungen (dort ist dann im Array "null"). Nachdem
+	 * alle Werte des Buckets aus der linken Matrix eingelesen wurden, werden die
+	 * Werte der rechten Matrix eingelesen. Dabei werden für jedes ankommende
+	 * Element (dessen Row) alle Werte aus der linken Matrix (deren Column)
+	 * "gesucht", die zueinander passen. Danach werden sie multipliziert und das
+	 * Ergebnis wird zusammen mit den Zielkoordination als Kay-Value-Paar
+	 * ausgegeben.
 	 */
 	public static class MatMulReducer extends Reducer<MapKeyClass, MatrixEntry, IntPairWritable, DoubleWritable> {
 
@@ -453,11 +486,11 @@ public class FirstPhase {
 		}
 
 		private void findPairs(int rightRow, int rightColumn, double value, Context context)
-				throws IOException, InterruptedException {		
-			int index = getIndex(firstColumn <= rightRow ? firstRow : firstRow + 1, rightRow);		
-			while(index < leftMatrixEntries.length) {
+				throws IOException, InterruptedException {
+			int index = getIndex(firstColumn <= rightRow ? firstRow : firstRow + 1, rightRow);
+			while (index < leftMatrixEntries.length) {
 				MatrixEntry leftEntry = leftMatrixEntries[index];
-				if(leftEntry != null) {
+				if (leftEntry != null) {
 					outKey.set(leftEntry.getRow(), rightColumn);
 					outValue.set(leftEntry.getValue() * value);
 					context.write(outKey, outValue);
