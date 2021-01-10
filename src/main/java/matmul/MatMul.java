@@ -86,6 +86,11 @@ public class MatMul extends Configured implements Tool {
 
 	public int[] parseMatrixDimensions(Configuration conf, String input0, String input1) {
 		int[] dimensions = new int[4];
+		// input ist von der Form "folders/MA-rows-columns.txt
+		// Die Zeile ist also immer an vorletzer Stelle und die
+		// Spalte an vorvorletzert Stelle im Array
+		// Man kann nicht von vorne zählen, da in den Namen
+		// der Order auch Bindestriche vorkommen können.
 		String[] leftInputArray = input0.split("\\.")[0].split("-");
 		String[] rightInputArray = input0.split("\\.")[0].split("-");
 		int rowsLeft = Integer.parseInt(leftInputArray[leftInputArray.length - 2]);
@@ -105,6 +110,13 @@ public class MatMul extends Configured implements Tool {
 
 	}
 
+	/*
+	 * Es wird bestimmt, wie viele Zeilen der linken Matrix und der Ergebnismatrix gleichzeitig
+	 * Hauptspeicher gehalten werden können, daraus ergibt sich die Zahl der Zeilen aus der linken
+	 * Matrix die an den selben Reducer geschickt werden (und so auch die Anzahl der Buckts)
+	 * Um die Parallelität ausnutzen werden aber maximal 1/10 aller Zeilen an den selben Reducer geschickt
+	 * (bei sehr sehr kleinen Matrizen führt dies zu einer Verlangsamung)
+	 */
 	public int getNumerOfBucketsSmall(int[] dimensions, Configuration conf) {
 		int rowsPerBucket = Math.min(MAX_BUCKET_SIZE / (dimensions[1] + dimensions[3]), dimensions[0] / 10);
 		int numOfBuckets = dimensions[0] / rowsPerBucket + 1;

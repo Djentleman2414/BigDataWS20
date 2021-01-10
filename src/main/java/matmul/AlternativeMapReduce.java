@@ -13,6 +13,10 @@ import types.IntPairWritable;
 
 public class AlternativeMapReduce {
 
+	/*
+	 * Einträge der linken Matrix werden immer nur an einen Reducer geschickt Dazu
+	 * werden die Zeilen in Buckets aufgeteilt
+	 */
 	public static class LeftMatrixMapper extends MatrixMapper {
 
 		private int rowsPerBucket;
@@ -35,6 +39,10 @@ public class AlternativeMapReduce {
 		}
 	}
 
+	/*
+	 * Die Einträge der rechten Matrix werden n mal weiter geschickt, wobei n gleich
+	 * die Anzahl an Buckets ist
+	 */
 	public static class RightMatrixMapper extends MatrixMapper {
 
 		@Override
@@ -50,6 +58,11 @@ public class AlternativeMapReduce {
 		}
 	}
 
+	/*
+	 * Im Reducer kommen die Werte so sortiert an, dass zuerst alle Werte der linken
+	 * dann alle Werte der rechten Matrix, jeweils aufsteigend sortiert nach Zeile
+	 * und Spalte ankommen
+	 */
 	public static class MatMulReducer extends Reducer<MapKeyClass, MatrixEntry, IntPairWritable, DoubleWritable> {
 
 		IntPairWritable outKey = new IntPairWritable();
@@ -103,19 +116,39 @@ public class AlternativeMapReduce {
 					outKey.set(e.getRow(), e.getColumn());
 					outValue.set(e.getValue());
 					context.write(outKey, outValue);
+					// da immer wieder das selbe Array benutzt wird, muss gekennzeichnet werden
+					// dass dieser Eintrag nicht verwendet wurde (für 0 Einträge relevant)
 					e.set(-1, -1, 0);
 				}
 			}
 		}
 
+		/*
+		 * In dem Array der linken Matrix stehen die Einträge aufsteigend nach Zeile und
+		 * Spalte sortiert. Da immer ganze Zeilen verarbeitet werden hat der Erste
+		 * Eintrag die Matrix-Koordinaten (firstRow,0) Ein Eintrag mit den Koordinaten
+		 * (firstRow + x,y) steht also x * Länge einer rechten Zeile (=
+		 * numOfColumnsLeft) + y vor dem ersten Eintrag
+		 */
 		private int getIndexLeft(int row, int column) {
 			return (row - firstRow) * numOfColumnsLeft + column;
 		}
 
+		/*
+		 * Gleich der Funktion für die linke Matrix, aber die Länge einer Zeile ist hier
+		 * die Anzahl an Spalten der rechen Matrix
+		 */
 		private int getIndexResult(int row, int column) {
 			return (row - firstRow) * numOfColumnsRight + column;
 		}
 
+		/*
+		 * Jeder Eintrag der rechten Matrix wird mit den zugehörigen Einträgen der
+		 * linken Matrix (in leftMatrixEntries) mulitpliziert. Ein Eintrag der rechten
+		 * matrix mit den Koordinaten (x,y) muss mit den Einträgen (firstRow,x),
+		 * (firstRow + 1, x) usw. multipliziert werde Das Ergebnis wird auf die Einträge
+		 * der Ergebnismatrix (firstRow,y), (firstRow+1,y) usw addiert
+		 */
 		private void findPairs(int rightRow, int rightColumn, double value) {
 			int leftIndex = getIndexLeft(firstRow, rightRow);
 			for (int i = 0; i < rowsPerBucket; i++) {

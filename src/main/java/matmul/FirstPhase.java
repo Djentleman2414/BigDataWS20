@@ -292,10 +292,6 @@ public class FirstPhase {
 
 		protected int numOfColumns;
 
-		// TODO: Wo werden die beiden benutzt?
-		protected int wroteToContextLeft;
-		protected int wroteToContextRight;
-
 		public void setup(Context context) {
 			Configuration conf = context.getConfiguration();
 			maxBucketSize = conf.getInt(MatMul.CONF_MAX_BUCKET_SIZE, 1);
