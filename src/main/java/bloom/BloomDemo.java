@@ -45,17 +45,17 @@ public class BloomDemo {
 		System.out.println(filter.membershipTest(new Key("hello".getBytes())));
 		
 		// serialize to local file system: read/write(DataIn/OutputStream)
-		DataOutputStream dataOut = new DataOutputStream(new FileOutputStream("filter.bloom"));
-		filter.write(dataOut);
-		dataOut.flush();
-		dataOut.close();
+	//	DataOutputStream dataOut = new DataOutputStream(new FileOutputStream("filter.bloom"));
+	//	filter.write(dataOut);
+	//	dataOut.flush();
+	//	dataOut.close();
 		
 		// serialize to HDFS
-		Configuration conf = new Configuration();
-		FileSystem fs = FileSystem.get(URI.create("bloom.filter"), conf);
-		DataOutputStream out = new DataOutputStream(fs.create(new Path("bloom.filter")));
-		filter.write(out);
-		out.close();
+	//	Configuration conf = new Configuration();
+	//	FileSystem fs = FileSystem.get(URI.create("bloom.filter"), conf);
+	//	DataOutputStream out = new DataOutputStream(fs.create(new Path("bloom.filter")));
+	//	filter.write(out);
+	//	out.close();
 
 	}
 

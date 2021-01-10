@@ -1,6 +1,7 @@
 package matmul;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.apache.hadoop.conf.Configuration;
@@ -29,38 +30,53 @@ public class MatMulTests {
 	@Before
 	public void setup() {
 		MatMulReducer reducer = new MatMulReducer();
-		
 		reduceDriver = ReduceDriver.newReduceDriver(reducer);
 	}
 	
 	@Test
 	public void testReducer1() throws IOException {
-		reduceDriver.getConfiguration().setInt("MAX_BUCKET_SIZE", 20);
-		reduceDriver.getConfiguration().setInt("NUM_OF_COLUMNS", 5);
+		reduceDriver.getConfiguration().setInt("max.bucket.size", 4);
+		reduceDriver.getConfiguration().setInt("num.of.columns.left", 5);
 		
-		MapKeyClass key = new MapKeyClass();
-		MatrixEntry[] values = new MatrixEntry[9];
-		values[0] = new MatrixEntry(0, 0, 1.0, true);
-		values[1] = new MatrixEntry(1, 1, 3.0, true);
-		values[2] = new MatrixEntry(2, 2, 4.0, true);
-		values[3] = new MatrixEntry(2, 4, 2.0, true);
-		values[4] = new MatrixEntry(0, 2, 1.0, false);
-		values[5] = new MatrixEntry(1, 1, 3.0, false);
-		values[6] = new MatrixEntry(2, 2, 4.0, false);
-		values[7] = new MatrixEntry(4, 1, 2.0, false);
-		values[8] = new MatrixEntry(4, 0, 1.0, false);
+		MapKeyClass key1 = new MapKeyClass(1, true, 0, 0);
+		MapKeyClass key2 = new MapKeyClass(2, true, 0, 0);
+		MapKeyClass key3 = new MapKeyClass(3, true, 0, 0);
+		MapKeyClass key4 = new MapKeyClass(4, true, 0, 0);
+		ArrayList<MatrixEntry> values1 = new ArrayList<MatrixEntry>();
+		ArrayList<MatrixEntry> values2 = new ArrayList<MatrixEntry>();
+		ArrayList<MatrixEntry> values3 = new ArrayList<MatrixEntry>();
+		ArrayList<MatrixEntry> values4 = new ArrayList<MatrixEntry>();
+		MatrixEntry rawvalues1 = new MatrixEntry(0, 0, 1.0, true);
+		MatrixEntry rawvalues2 = new MatrixEntry(1, 1, 3.0, true);
+		MatrixEntry rawvalues3 = new MatrixEntry(2, 2, 4.0, true);
+		MatrixEntry rawvalues4 = new MatrixEntry(2, 4, 2.0, true);
+		values1.add(rawvalues1);
+		values2.add(rawvalues2);
+		values3.add(rawvalues3);
+		values4.add(rawvalues4);
+		MatrixEntry[] rawrightValues = new MatrixEntry[5];
+		rawrightValues[0] = new MatrixEntry(0, 2, 1.0, false);
+		rawrightValues[1] = new MatrixEntry(1, 1, 3.0, false);
+		rawrightValues[2] = new MatrixEntry(2, 2, 4.0, false);
+		rawrightValues[3] = new MatrixEntry(4, 1, 2.0, false);
+		rawrightValues[4] = new MatrixEntry(4, 0, 1.0, false);
 		
-		reduceDriver.addInput(key, Arrays.asList(values));
-		
+		values1.addAll(Arrays.asList(rawrightValues));
+		values2.addAll(Arrays.asList(rawrightValues));
+		values3.addAll(Arrays.asList(rawrightValues));
+		values4.addAll(Arrays.asList(rawrightValues));
+
+		reduceDriver.addInput(key1, values1);
+		reduceDriver.addInput(key2, values2);
+		reduceDriver.addInput(key3, values3);
+		reduceDriver.addInput(key4, values4);
+	
 		reduceDriver.addOutput(new IntPairWritable(0,2), new DoubleWritable(1.0));
 		reduceDriver.addOutput(new IntPairWritable(1,1), new DoubleWritable(9.0));
 		reduceDriver.addOutput(new IntPairWritable(2,2), new DoubleWritable(16.0));
 		reduceDriver.addOutput(new IntPairWritable(2,1), new DoubleWritable(4.0));
 		reduceDriver.addOutput(new IntPairWritable(2,0), new DoubleWritable(2.0));
-
-
 		
 		reduceDriver.runTest();
 	}
-
 }
